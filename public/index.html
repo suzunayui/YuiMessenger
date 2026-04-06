@@ -4,70 +4,192 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>YuiMessenger</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="page">
-      <section class="hero">
-        <p class="eyebrow">YuiMessenger</p>
-        <h1>Passkey-first messaging for small groups.</h1>
-        <p class="lead">
-          Podman でも Docker でもそのまま立ち上げられる、開発用の最小構成です。
-        </p>
-      </section>
+    <div class="page-shell">
+      <main class="page">
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Passkey-first chat demo</p>
+            <h1>Friendly chat, faster sign-in, cleaner first impression.</h1>
+            <p class="lead">
+              YuiMessenger is a lightweight social chat prototype built around passkeys,
+              presence, direct messages, and group conversations. The screen now reads
+              like a polished product preview instead of a raw API test page.
+            </p>
 
-      <section class="panel">
-        <h2>Current MVP foundation</h2>
-        <ul>
-          <li>Node.js app container</li>
-          <li>Postgres container with init SQL</li>
-          <li>Health API at <code>/api/health</code></li>
-          <li>Spec summary API at <code>/api/spec-summary</code></li>
-        </ul>
-      </section>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#auth-section">Try the demo</a>
+              <a class="button button-secondary" href="#feature-section">See features</a>
+            </div>
 
-      <section class="panel">
-        <h2>Passkey Playground</h2>
-        <p class="lead compact">
-          まずユーザーを作ってから、そのユーザーIDでパスキー登録と認証を試せます。
-        </p>
+            <dl class="hero-stats" aria-label="Product highlights">
+              <div>
+                <dt>Auth</dt>
+                <dd>Passkeys</dd>
+              </div>
+              <div>
+                <dt>Realtime</dt>
+                <dd>WebSocket</dd>
+              </div>
+              <div>
+                <dt>Modes</dt>
+                <dd>DM + Group</dd>
+              </div>
+            </dl>
+          </div>
 
-        <div class="auth-grid">
-          <form id="create-user-form" class="stack">
-            <h3>Create User</h3>
-            <label>
-              User ID
-              <input name="userId" value="yui_demo" required>
-            </label>
-            <label>
-              Display Name
-              <input name="displayName" value="Yui Demo" required>
-            </label>
-            <button type="submit">Create User</button>
-          </form>
+          <aside class="hero-showcase" aria-label="Application preview">
+            <div class="floating-note floating-note-top">
+              <span class="dot"></span>
+              Passkey onboarding in one flow
+            </div>
 
-          <form id="register-passkey-form" class="stack">
-            <h3>Register Passkey</h3>
-            <label>
-              User ID
-              <input name="userId" value="yui_demo" required>
-            </label>
-            <button type="submit">Register Passkey</button>
-          </form>
+            <div class="preview-card">
+              <div class="preview-topbar">
+                <div class="avatar-cluster" aria-hidden="true">
+                  <span>Y</span>
+                  <span>M</span>
+                </div>
+                <div>
+                  <p class="preview-label">YuiMessenger</p>
+                  <p class="preview-title">Secure, social, and easy to scan</p>
+                </div>
+              </div>
 
-          <form id="login-passkey-form" class="stack">
-            <h3>Authenticate</h3>
-            <label>
-              User ID
-              <input name="userId" value="yui_demo" required>
-            </label>
-            <button type="submit">Authenticate with Passkey</button>
-          </form>
-        </div>
+              <div class="message-stack" aria-hidden="true">
+                <article class="bubble bubble-accent">
+                  <p class="bubble-name">Yui</p>
+                  <p>Passkey sign-in is ready. Want to open the group room?</p>
+                </article>
+                <article class="bubble bubble-muted">
+                  <p class="bubble-name">System</p>
+                  <p>Presence synced. Unread counts and reactions are available.</p>
+                </article>
+                <article class="bubble bubble-light">
+                  <p class="bubble-name">Mika</p>
+                  <p>Nice. The landing page finally feels like a real product.</p>
+                </article>
+              </div>
 
-        <pre id="auth-log" class="log">Ready.</pre>
-      </section>
-    </main>
+              <div class="support-strip">
+                <span id="support-pill" class="support-pill">Checking browser support</span>
+                <span class="mini-chip">WebAuthn</span>
+                <span class="mini-chip">Realtime</span>
+              </div>
+            </div>
+
+            <div class="floating-note floating-note-bottom">
+              <strong>Available now</strong>
+              <span>Presence, reactions, read state, and audit-ready APIs.</span>
+            </div>
+          </aside>
+        </section>
+
+        <section id="feature-section" class="panel panel-soft">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow eyebrow-soft">Why it feels better</p>
+              <h2>A clearer story around the same backend capabilities.</h2>
+            </div>
+            <p class="section-copy">
+              The interface now separates product value, setup actions, and technical
+              feedback so new visitors can understand what the app does before touching a form.
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card">
+              <p class="feature-kicker">01</p>
+              <h3>Warm visual language</h3>
+              <p>Rounded cards, playful type, and layered gradients make the demo feel inviting.</p>
+            </article>
+            <article class="feature-card">
+              <p class="feature-kicker">02</p>
+              <h3>Stronger hierarchy</h3>
+              <p>Hero copy, feature notes, and auth tasks each have a distinct visual weight.</p>
+            </article>
+            <article class="feature-card">
+              <p class="feature-kicker">03</p>
+              <h3>Better usability</h3>
+              <p>Focused forms, visible states, and cleaner logs help during testing and demos.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="auth-section" class="panel auth-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow eyebrow-soft">Interactive demo</p>
+              <h2>Create a user, register a passkey, and sign in.</h2>
+            </div>
+            <p class="section-copy">
+              Start with the same demo account across all three cards, or change the values to
+              test a different user flow.
+            </p>
+          </div>
+
+          <div class="auth-grid">
+            <form id="create-user-form" class="auth-card stack">
+              <div class="card-heading">
+                <p class="card-step">Step 1</p>
+                <h3>Create user</h3>
+              </div>
+              <label>
+                <span>User ID</span>
+                <input name="userId" value="yui_demo" required>
+              </label>
+              <label>
+                <span>Display name</span>
+                <input name="displayName" value="Yui Demo" required>
+              </label>
+              <button type="submit" class="button button-primary button-block">Create account</button>
+            </form>
+
+            <form id="register-passkey-form" class="auth-card stack">
+              <div class="card-heading">
+                <p class="card-step">Step 2</p>
+                <h3>Register passkey</h3>
+              </div>
+              <label>
+                <span>User ID</span>
+                <input name="userId" value="yui_demo" required>
+              </label>
+              <p class="card-note">This stores a passkey credential for the selected account.</p>
+              <button type="submit" class="button button-primary button-block">Register passkey</button>
+            </form>
+
+            <form id="login-passkey-form" class="auth-card stack">
+              <div class="card-heading">
+                <p class="card-step">Step 3</p>
+                <h3>Sign in</h3>
+              </div>
+              <label>
+                <span>User ID</span>
+                <input name="userId" value="yui_demo" required>
+              </label>
+              <p class="card-note">Use the registered passkey to complete authentication.</p>
+              <button type="submit" class="button button-primary button-block">Sign in with passkey</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="log-header">
+            <div>
+              <p class="eyebrow eyebrow-soft">Runtime feedback</p>
+              <h2>Auth log</h2>
+            </div>
+            <p class="log-caption">API responses and WebAuthn results will appear here.</p>
+          </div>
+          <pre id="auth-log" class="log">Waiting for actions...</pre>
+        </section>
+      </main>
+    </div>
 
     <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
     <script src="/app.js"></script>
