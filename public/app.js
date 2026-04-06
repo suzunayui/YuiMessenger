@@ -8,8 +8,8 @@ const webAuthnSupported = browserSupportsWebAuthn();
 setSupportState(webAuthnSupported);
 logMessage(
   webAuthnSupported
-    ? "WebAuthn is available in this browser. You can test the passkey flow now."
-    : "WebAuthn is not available in this browser. Passkey actions will not complete here."
+    ? "このブラウザは WebAuthn に対応しています。パスキーの動作を試せます。"
+    : "このブラウザは WebAuthn に対応していません。ここではパスキー操作を完了できません。"
 );
 
 document.querySelector("#create-user-form").addEventListener("submit", async (event) => {
@@ -22,7 +22,7 @@ document.querySelector("#create-user-form").addEventListener("submit", async (ev
   };
 
   const result = await postJSON("/api/users", payload);
-  logMessage(["User created successfully.", result]);
+  logMessage(["ユーザーを作成しました。", result]);
 });
 
 document.querySelector("#register-passkey-form").addEventListener("submit", async (event) => {
@@ -39,9 +39,9 @@ document.querySelector("#register-passkey-form").addEventListener("submit", asyn
       response
     });
 
-    logMessage(["Passkey registered successfully.", verification]);
+    logMessage(["パスキーを登録しました。", verification]);
   } catch (error) {
-    logMessage(["Passkey registration failed.", error.message || error]);
+    logMessage(["パスキー登録に失敗しました。", error.message || error]);
   }
 });
 
@@ -59,9 +59,9 @@ document.querySelector("#login-passkey-form").addEventListener("submit", async (
       response
     });
 
-    logMessage(["Signed in successfully.", verification]);
+    logMessage(["ログインに成功しました。", verification]);
   } catch (error) {
-    logMessage(["Sign-in failed.", error.message || error]);
+    logMessage(["ログインに失敗しました。", error.message || error]);
   }
 });
 
@@ -96,7 +96,7 @@ function setSupportState(isSupported) {
   }
 
   supportPill.textContent = isSupported
-    ? "Browser supports passkeys"
-    : "Browser does not support passkeys";
+    ? "このブラウザはパスキーに対応しています"
+    : "このブラウザはパスキーに対応していません";
   supportPill.classList.add(isSupported ? "is-supported" : "is-unsupported");
 }

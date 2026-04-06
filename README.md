@@ -25,6 +25,22 @@ docker compose up --build
 
 VPS 上で本番寄りに試すために、[compose.yml](c:/Users/mikan/YuiMessenger/compose.yml) と [infra/Caddyfile](c:/Users/mikan/YuiMessenger/infra/Caddyfile) を `m.yuiroom.net` 前提にしています。
 
+### Quick Start on VPS
+
+```bash
+git clone https://github.com/suzunayui/YuiMessenger.git
+cd YuiMessenger
+chmod +x scripts/init-env.sh
+./scripts/init-env.sh m.yuiroom.net
+docker compose --env-file .env up -d --build
+```
+
+Restart only:
+
+```bash
+docker compose --env-file .env restart
+```
+
 ### 1. Generate `.env`
 
 固定パスワードを使わないように、[scripts/init-env.sh](c:/Users/mikan/YuiMessenger/scripts/init-env.sh) で強い値を自動生成できます。
