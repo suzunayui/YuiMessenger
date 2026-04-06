@@ -6,189 +6,315 @@
     <title>YuiMessenger</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;800&family=Noto+Serif+JP:wght@500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <div class="page-shell">
       <main class="page">
-        <section class="hero">
-          <div class="hero-copy">
-            <p class="eyebrow">パスキー対応チャットデモ</p>
-            <h1>やさしくつながる。ログインはもっとスムーズに。</h1>
-            <p class="lead">
-              YuiMessenger は、パスキー認証、オンライン状態、ダイレクトメッセージ、
-              グループ会話を中心にした軽量なチャットアプリです。API の検証画面ではなく、
-              プロダクトの魅力が伝わるトップページとして見せられるように整えています。
-            </p>
+        <section id="auth-view" class="view view-active">
+          <section class="hero">
+            <div class="hero-copy">
+              <p class="eyebrow">YuiMessenger</p>
+              <h1>パスキーで始めて、そのまま会話までつながる。</h1>
+              <p class="lead">
+                YuiMessenger は、パスキー認証、フレンド管理、DM、グループチャット、
+                リアクション、既読管理をひとつの流れで試せるチャットアプリです。
+              </p>
 
-            <div class="hero-actions">
-              <a class="button button-primary" href="#auth-section">デモを試す</a>
-              <a class="button button-secondary" href="#feature-section">機能を見る</a>
-            </div>
-
-            <dl class="hero-stats" aria-label="プロダクトの特長">
-              <div>
-                <dt>認証</dt>
-                <dd>パスキー</dd>
+              <div class="hero-actions">
+                <a class="button button-primary" href="#auth-cards">セットアップを始める</a>
+                <button id="resume-session-button" class="button button-secondary" type="button" hidden>前回の続きへ</button>
               </div>
-              <div>
-                <dt>リアルタイム</dt>
-                <dd>WebSocket</dd>
-              </div>
-              <div>
-                <dt>会話形式</dt>
-                <dd>DM + グループ</dd>
-              </div>
-            </dl>
-          </div>
 
-          <aside class="hero-showcase" aria-label="アプリのプレビュー">
-            <div class="floating-note floating-note-top">
-              <span class="dot"></span>
-              パスキー登録までをひとつの流れで
-            </div>
-
-            <div class="preview-card">
-              <div class="preview-topbar">
-                <div class="avatar-cluster" aria-hidden="true">
-                  <span>Y</span>
-                  <span>M</span>
+              <dl class="hero-stats" aria-label="アプリの特長">
+                <div>
+                  <dt>認証</dt>
+                  <dd>パスキー</dd>
                 </div>
                 <div>
-                  <p class="preview-label">YuiMessenger</p>
-                  <p class="preview-title">安心して使えて、見やすく、会話しやすい</p>
+                  <dt>会話</dt>
+                  <dd>DM / グループ</dd>
+                </div>
+                <div>
+                  <dt>同期</dt>
+                  <dd>WebSocket</dd>
+                </div>
+              </dl>
+            </div>
+
+            <aside class="hero-showcase" aria-label="アプリのプレビュー">
+              <div class="floating-note floating-note-top">
+                <span class="dot"></span>
+                ログイン後すぐにチャット画面へ
+              </div>
+
+              <div class="preview-card">
+                <div class="preview-topbar">
+                  <div class="avatar-cluster" aria-hidden="true">
+                    <span>Y</span>
+                    <span>M</span>
+                  </div>
+                  <div>
+                    <p class="preview-label">チャットダッシュボード</p>
+                    <p class="preview-title">認証から会話までひと続きで試せます</p>
+                  </div>
+                </div>
+
+                <div class="message-stack" aria-hidden="true">
+                  <article class="bubble bubble-accent">
+                    <p class="bubble-name">Yui</p>
+                    <p>パスキーで入れたら、そのまま DM とグループを開けるよ。</p>
+                  </article>
+                  <article class="bubble bubble-muted">
+                    <p class="bubble-name">システム</p>
+                    <p>未読数、リアクション、既読状態、監査ログをまとめて確認できます。</p>
+                  </article>
+                  <article class="bubble bubble-light">
+                    <p class="bubble-name">Mika</p>
+                    <p>認証だけで終わらず、ちゃんと会話の体験までつながるのがいいね。</p>
+                  </article>
+                </div>
+
+                <div class="support-strip">
+                  <span id="support-pill" class="support-pill">ブラウザ対応を確認中</span>
+                  <span class="mini-chip">WebAuthn</span>
+                  <span class="mini-chip">リアルタイム</span>
                 </div>
               </div>
 
-              <div class="message-stack" aria-hidden="true">
-                <article class="bubble bubble-accent">
-                  <p class="bubble-name">Yui</p>
-                  <p>パスキーでのログイン準備ができたよ。グループルームを開く？</p>
-                </article>
-                <article class="bubble bubble-muted">
-                  <p class="bubble-name">システム</p>
-                  <p>オンライン状態を同期しました。未読数とリアクションも利用できます。</p>
-                </article>
-                <article class="bubble bubble-light">
-                  <p class="bubble-name">Mika</p>
-                  <p>いい感じ。トップページがちゃんとプロダクトっぽく見えるね。</p>
-                </article>
+              <div class="floating-note floating-note-bottom">
+                <strong>今の実装範囲</strong>
+                <span>ユーザー作成、フレンド申請、DM、グループ、メッセージ、リアクション、既読管理。</span>
               </div>
+            </aside>
+          </section>
 
-              <div class="support-strip">
-                <span id="support-pill" class="support-pill">ブラウザ対応を確認中</span>
-                <span class="mini-chip">WebAuthn</span>
-                <span class="mini-chip">リアルタイム</span>
+          <section id="auth-cards" class="panel auth-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow eyebrow-soft">はじめにすること</p>
+                <h2>ユーザー作成、パスキー登録、ログインを順番に進めます。</h2>
               </div>
+              <p class="section-copy">
+                ログインが成功すると、下の認証ログではなくチャット画面へ切り替わります。
+              </p>
             </div>
 
-            <div class="floating-note floating-note-bottom">
-              <strong>現在使える機能</strong>
-              <span>オンライン状態、リアクション、既読状態、監査ログ向け API を利用できます。</span>
+            <div class="auth-grid">
+              <form id="create-user-form" class="auth-card stack">
+                <div class="card-heading">
+                  <p class="card-step">STEP 1</p>
+                  <h3>ユーザー作成</h3>
+                </div>
+                <label>
+                  <span>ユーザー ID</span>
+                  <input name="userId" value="yui_demo" required>
+                </label>
+                <label>
+                  <span>表示名</span>
+                  <input name="displayName" value="Yui Demo" required>
+                </label>
+                <button type="submit" class="button button-primary button-block">アカウントを作成</button>
+              </form>
+
+              <form id="register-passkey-form" class="auth-card stack">
+                <div class="card-heading">
+                  <p class="card-step">STEP 2</p>
+                  <h3>パスキー登録</h3>
+                </div>
+                <label>
+                  <span>ユーザー ID</span>
+                  <input name="userId" value="yui_demo" required>
+                </label>
+                <p class="card-note">選択したアカウントに対してパスキー認証情報を保存します。</p>
+                <button type="submit" class="button button-primary button-block">パスキーを登録</button>
+              </form>
+
+              <form id="login-passkey-form" class="auth-card stack">
+                <div class="card-heading">
+                  <p class="card-step">STEP 3</p>
+                  <h3>ログイン</h3>
+                </div>
+                <label>
+                  <span>ユーザー ID</span>
+                  <input name="userId" value="yui_demo" required>
+                </label>
+                <p class="card-note">登録したパスキーで認証すると、そのままチャット画面へ進みます。</p>
+                <button type="submit" class="button button-primary button-block">パスキーでログイン</button>
+              </form>
             </div>
-          </aside>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="log-header">
+              <div>
+                <p class="eyebrow eyebrow-soft">実行ログ</p>
+                <h2>認証ログ</h2>
+              </div>
+              <p class="log-caption">認証時のレスポンスとエラー内容をここで確認できます。</p>
+            </div>
+            <pre id="auth-log" class="log">操作を待っています...</pre>
+          </section>
         </section>
 
-        <section id="feature-section" class="panel panel-soft">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow eyebrow-soft">見た目を整えたポイント</p>
-              <h2>同じ機能でも、伝わり方をもっと分かりやすく。</h2>
-            </div>
-            <p class="section-copy">
-              プロダクトの価値、セットアップ操作、技術的なフィードバックを分けて見せることで、
-              はじめて触る人でもフォームを操作する前にアプリの全体像をつかみやすくしました。
-            </p>
+        <section id="app-view" class="view" hidden>
+          <div class="app-shell">
+            <aside class="app-sidebar">
+              <section class="panel sidebar-panel profile-panel">
+                <div class="profile-head">
+                  <div>
+                    <p class="eyebrow eyebrow-soft">現在のユーザー</p>
+                    <h2 id="current-user-name" class="profile-name">-</h2>
+                  </div>
+                  <button id="logout-button" class="button button-secondary button-small" type="button">ログアウト</button>
+                </div>
+                <p id="current-user-id" class="muted-line">-</p>
+
+                <label>
+                  <span>ステータス</span>
+                  <select id="presence-select">
+                    <option value="online">オンライン</option>
+                    <option value="away">離席中</option>
+                    <option value="offline">オフライン</option>
+                  </select>
+                </label>
+
+                <div class="mini-stats">
+                  <div>
+                    <span class="mini-label">チャット</span>
+                    <strong id="chat-count">0</strong>
+                  </div>
+                  <div>
+                    <span class="mini-label">フレンド</span>
+                    <strong id="friend-count">0</strong>
+                  </div>
+                  <div>
+                    <span class="mini-label">未読</span>
+                    <strong id="unread-count">0</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel sidebar-panel">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow eyebrow-soft">チャット一覧</p>
+                    <h2>会話</h2>
+                  </div>
+                  <button id="refresh-button" class="button button-secondary button-small" type="button">更新</button>
+                </div>
+                <div id="chat-list" class="chat-list"></div>
+              </section>
+            </aside>
+
+            <section class="chat-stage">
+              <section class="panel chat-panel">
+                <div id="chat-empty" class="empty-state">
+                  <p class="eyebrow eyebrow-soft">まだチャットが選ばれていません</p>
+                  <h2>右の操作から DM またはグループを作成してください。</h2>
+                  <p class="section-copy">フレンドを追加してから DM を作成できます。グループは承認済みフレンドをメンバーに選べます。</p>
+                </div>
+
+                <div id="chat-room" class="chat-room" hidden>
+                  <header class="chat-room-head">
+                    <div>
+                      <p id="chat-kind" class="eyebrow eyebrow-soft">-</p>
+                      <h2 id="chat-title">-</h2>
+                    </div>
+                    <div class="chat-actions">
+                      <button id="mark-read-button" class="button button-secondary button-small" type="button">既読にする</button>
+                      <button id="toggle-notifications-button" class="button button-secondary button-small" type="button">通知設定</button>
+                    </div>
+                  </header>
+
+                  <div id="chat-meta" class="chat-meta"></div>
+                  <div id="message-list" class="message-list"></div>
+
+                  <form id="message-form" class="composer">
+                    <textarea id="message-input" rows="3" placeholder="メッセージを入力"></textarea>
+                    <div class="composer-actions">
+                      <p class="muted-line">Enter で改行せず送信、Shift+Enter で改行できます。</p>
+                      <button type="submit" class="button button-primary">送信</button>
+                    </div>
+                  </form>
+                </div>
+              </section>
+            </section>
+
+            <aside class="app-rail">
+              <section class="panel rail-panel">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow eyebrow-soft">フレンド</p>
+                    <h2>つながり</h2>
+                  </div>
+                </div>
+
+                <form id="friend-request-form" class="stack">
+                  <label>
+                    <span>追加したいユーザー ID</span>
+                    <input id="friend-request-user-id" placeholder="tomodachi_id">
+                  </label>
+                  <button type="submit" class="button button-primary button-block">フレンド申請を送る</button>
+                </form>
+
+                <div class="rail-section">
+                  <p class="subheading">申請一覧</p>
+                  <div id="friend-request-list" class="item-stack"></div>
+                </div>
+
+                <div class="rail-section">
+                  <p class="subheading">フレンド</p>
+                  <div id="friend-list" class="item-stack"></div>
+                </div>
+              </section>
+
+              <section class="panel rail-panel">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow eyebrow-soft">新しい会話</p>
+                    <h2>作成</h2>
+                  </div>
+                </div>
+
+                <form id="dm-form" class="stack">
+                  <label>
+                    <span>DM を始める相手</span>
+                    <select id="dm-target-select"></select>
+                  </label>
+                  <button type="submit" class="button button-secondary button-block">DM を作成 / 開く</button>
+                </form>
+
+                <form id="group-form" class="stack top-gap">
+                  <label>
+                    <span>グループ名</span>
+                    <input id="group-title-input" placeholder="開発チーム">
+                  </label>
+                  <div>
+                    <p class="subheading">メンバー</p>
+                    <div id="group-member-options" class="checkbox-grid"></div>
+                  </div>
+                  <button type="submit" class="button button-primary button-block">グループを作成</button>
+                </form>
+              </section>
+
+              <section class="panel rail-panel">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow eyebrow-soft">監査ログ</p>
+                    <h2>グループ管理</h2>
+                  </div>
+                </div>
+                <div id="audit-log-list" class="item-stack"></div>
+              </section>
+            </aside>
           </div>
-
-          <div class="feature-grid">
-            <article class="feature-card">
-              <p class="feature-kicker">01</p>
-              <h3>やわらかいビジュアル</h3>
-              <p>丸みのあるカード、親しみやすい書体、重なりのあるグラデーションで印象を明るくしています。</p>
-            </article>
-            <article class="feature-card">
-              <p class="feature-kicker">02</p>
-              <h3>見出しの強弱を整理</h3>
-              <p>ヒーロー、機能説明、認証操作の優先度がひと目で分かるように情報の重みを整理しました。</p>
-            </article>
-            <article class="feature-card">
-              <p class="feature-kicker">03</p>
-              <h3>試しやすい操作感</h3>
-              <p>フォームの視認性、状態表示、ログの読みやすさを改善して、検証やデモで扱いやすくしています。</p>
-            </article>
-          </div>
-        </section>
-
-        <section id="auth-section" class="panel auth-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow eyebrow-soft">インタラクティブデモ</p>
-              <h2>ユーザー作成からパスキー認証まで、まとめて試せます。</h2>
-            </div>
-            <p class="section-copy">
-              3つのカードで同じデモアカウントを使うことも、値を変えて別のユーザーフローを試すこともできます。
-            </p>
-          </div>
-
-          <div class="auth-grid">
-            <form id="create-user-form" class="auth-card stack">
-              <div class="card-heading">
-                <p class="card-step">STEP 1</p>
-                <h3>ユーザー作成</h3>
-              </div>
-              <label>
-                <span>ユーザー ID</span>
-                <input name="userId" value="yui_demo" required>
-              </label>
-              <label>
-                <span>表示名</span>
-                <input name="displayName" value="Yui Demo" required>
-              </label>
-              <button type="submit" class="button button-primary button-block">アカウントを作成</button>
-            </form>
-
-            <form id="register-passkey-form" class="auth-card stack">
-              <div class="card-heading">
-                <p class="card-step">STEP 2</p>
-                <h3>パスキー登録</h3>
-              </div>
-              <label>
-                <span>ユーザー ID</span>
-                <input name="userId" value="yui_demo" required>
-              </label>
-              <p class="card-note">選択したアカウントに対して、パスキー認証情報を登録します。</p>
-              <button type="submit" class="button button-primary button-block">パスキーを登録</button>
-            </form>
-
-            <form id="login-passkey-form" class="auth-card stack">
-              <div class="card-heading">
-                <p class="card-step">STEP 3</p>
-                <h3>ログイン</h3>
-              </div>
-              <label>
-                <span>ユーザー ID</span>
-                <input name="userId" value="yui_demo" required>
-              </label>
-              <p class="card-note">登録済みのパスキーを使って認証を完了します。</p>
-              <button type="submit" class="button button-primary button-block">パスキーでログイン</button>
-            </form>
-          </div>
-        </section>
-
-        <section class="panel log-panel">
-          <div class="log-header">
-            <div>
-              <p class="eyebrow eyebrow-soft">実行ログ</p>
-              <h2>認証ログ</h2>
-            </div>
-            <p class="log-caption">API のレスポンスや WebAuthn の結果がここに表示されます。</p>
-          </div>
-          <pre id="auth-log" class="log">操作を待っています...</pre>
         </section>
       </main>
     </div>
+
+    <div id="toast" class="toast" hidden></div>
 
     <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
     <script src="/app.js"></script>

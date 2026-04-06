@@ -109,6 +109,10 @@ app.post("/api/users/:userId/notifications", wrap(async (req, res) => {
   }));
 }));
 
+app.get("/api/users/:userId/chats", wrap(async (req, res) => {
+  res.json(await store.listChatsForUser(req.params.userId));
+}));
+
 app.get("/api/users/:userId/unreads", wrap(async (req, res) => {
   res.json(await store.getUnreadSummary(req.params.userId));
 }));

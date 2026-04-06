@@ -188,6 +188,64 @@ class AppStore {
     return result.rows.map(mapNotificationSetting);
   }
 
+  async listChatsForUser(userId) {
+    const user = await this.requireUser(userId);
+    const blockedIds = await this.blockedUserIdsFor(user.id);
+    const result = await this.pool.query(
+      `SELECT c.id, c.kind, c.title, c.created_by_user_id, c.created_at
+       FROM chats c
+       JOIN chat_members cm ON cm.chat_id = c.id
+       WHERE cm.user_id = $1
+       ORDER BY c.id DESC`,
+      [user.id]
+    );
+
+    const chats = [];
+    for (const row of result.rows) {
+      const chat = await this.requireChat(row.id);
+      const readState = await this.getReadState(chat.id, user.id);
+      const lastMessageResult = blockedIds.length > 0
+        ? await this.pool.query(
+            `SELECT id, chat_id, sender_user_id, body, deleted_at, created_at
+             FROM messages
+             WHERE chat_id = $1 AND NOT (sender_user_id = ANY($2::bigint[]))
+             ORDER BY id DESC
+             LIMIT 1`,
+            [chat.id, blockedIds]
+          )
+        : await this.pool.query(
+            `SELECT id, chat_id, sender_user_id, body, deleted_at, created_at
+             FROM messages
+             WHERE chat_id = $1
+             ORDER BY id DESC
+             LIMIT 1`,
+            [chat.id]
+          );
+
+      const unreadResult = blockedIds.length > 0
+        ? await this.pool.query(
+            `SELECT COUNT(*)::int AS unread_count
+             FROM messages
+             WHERE chat_id = $1 AND sender_user_id <> $2 AND id > $3 AND NOT (sender_user_id = ANY($4::bigint[]))`,
+            [chat.id, user.id, readState?.lastReadMessageId || 0, blockedIds]
+          )
+        : await this.pool.query(
+            `SELECT COUNT(*)::int AS unread_count
+             FROM messages
+             WHERE chat_id = $1 AND sender_user_id <> $2 AND id > $3`,
+            [chat.id, user.id, readState?.lastReadMessageId || 0]
+          );
+
+      chats.push({
+        ...chat,
+        lastMessage: lastMessageResult.rowCount > 0 ? mapMessage(lastMessageResult.rows[0], []) : null,
+        unreadCount: unreadResult.rows[0].unread_count
+      });
+    }
+
+    return chats;
+  }
+
   async getUnreadSummary(userId) {
     const user = await this.requireUser(userId);
     const blockedIds = await this.blockedUserIdsFor(user.id);
