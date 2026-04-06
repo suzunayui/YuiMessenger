@@ -1,0 +1,80 @@
+CREATE TABLE IF NOT EXISTS users (
+  id BIGSERIAL PRIMARY KEY,
+  user_id VARCHAR(32) NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS friendships (
+  id BIGSERIAL PRIMARY KEY,
+  requester_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  addressee_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'blocked')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (requester_user_id, addressee_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS chats (
+  id BIGSERIAL PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('dm', 'group')),
+  title TEXT,
+  created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS chat_members (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS group_roles (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  can_delete_messages BOOLEAN NOT NULL DEFAULT FALSE,
+  can_kick_members BOOLEAN NOT NULL DEFAULT FALSE,
+  can_edit_group_name BOOLEAN NOT NULL DEFAULT FALSE,
+  can_invite_members BOOLEAN NOT NULL DEFAULT FALSE,
+  can_manage_roles BOOLEAN NOT NULL DEFAULT FALSE,
+  can_view_audit_logs BOOLEAN NOT NULL DEFAULT FALSE,
+  can_delete_audit_logs BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS group_role_members (
+  id BIGSERIAL PRIMARY KEY,
+  role_id BIGINT NOT NULL REFERENCES group_roles(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (role_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  sender_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  body TEXT NOT NULL,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+  id BIGSERIAL PRIMARY KEY,
+  message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (message_id, user_id, emoji)
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT REFERENCES chats(id) ON DELETE CASCADE,
+  actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

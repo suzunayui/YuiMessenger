@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YuiMessenger</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">YuiMessenger</p>
+        <h1>Passkey-first messaging for small groups.</h1>
+        <p class="lead">
+          Podman でも Docker でもそのまま立ち上げられる、開発用の最小構成です。
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Current MVP foundation</h2>
+        <ul>
+          <li>Node.js app container</li>
+          <li>Postgres container with init SQL</li>
+          <li>Health API at <code>/api/health</code></li>
+          <li>Spec summary API at <code>/api/spec-summary</code></li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <h2>Passkey Playground</h2>
+        <p class="lead compact">
+          まずユーザーを作ってから、そのユーザーIDでパスキー登録と認証を試せます。
+        </p>
+
+        <div class="auth-grid">
+          <form id="create-user-form" class="stack">
+            <h3>Create User</h3>
+            <label>
+              User ID
+              <input name="userId" value="yui_demo" required>
+            </label>
+            <label>
+              Display Name
+              <input name="displayName" value="Yui Demo" required>
+            </label>
+            <button type="submit">Create User</button>
+          </form>
+
+          <form id="register-passkey-form" class="stack">
+            <h3>Register Passkey</h3>
+            <label>
+              User ID
+              <input name="userId" value="yui_demo" required>
+            </label>
+            <button type="submit">Register Passkey</button>
+          </form>
+
+          <form id="login-passkey-form" class="stack">
+            <h3>Authenticate</h3>
+            <label>
+              User ID
+              <input name="userId" value="yui_demo" required>
+            </label>
+            <button type="submit">Authenticate with Passkey</button>
+          </form>
+        </div>
+
+        <pre id="auth-log" class="log">Ready.</pre>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

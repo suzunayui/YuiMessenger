@@ -1,0 +1,53 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yuimessenger-app
+    working_dir: /app
+    command: npm run start
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:-postgres://yuimessenger:change-me@db:5432/yuimessenger}
+      RP_ID: ${RP_ID:-m.yuiroom.net}
+      RP_NAME: ${RP_NAME:-YuiMessenger}
+      EXPECTED_ORIGIN: ${EXPECTED_ORIGIN:-https://m.yuiroom.net}
+    volumes:
+      - .:/app
+      - yuimessenger_node_modules:/app/node_modules
+    depends_on:
+      - db
+
+  db:
+    image: docker.io/library/postgres:17-bookworm
+    container_name: yuimessenger-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-yuimessenger}
+      POSTGRES_USER: ${POSTGRES_USER:-yuimessenger}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yuimessenger}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+
+  proxy:
+    image: docker.io/library/caddy:2-alpine
+    container_name: yuimessenger-proxy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  yuimessenger_node_modules:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,160 @@
+:root {
+  color-scheme: light;
+  --bg: #f4efe6;
+  --panel: rgba(255, 252, 247, 0.85);
+  --line: rgba(66, 49, 34, 0.16);
+  --text: #2f241b;
+  --accent: #d7673d;
+  --accent-strong: #9f3f1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(215, 103, 61, 0.25), transparent 30%),
+    linear-gradient(145deg, #f6f0e8, #e8dece);
+}
+
+.page {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 64px 0 80px;
+}
+
+.hero,
+.panel {
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: 0 18px 40px rgba(69, 47, 24, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.panel {
+  margin-top: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.8rem;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 6vw, 4.5rem);
+  line-height: 0.96;
+}
+
+h2 {
+  margin-bottom: 16px;
+  font-size: 1.4rem;
+}
+
+.lead {
+  margin: 20px 0 0;
+  max-width: 42rem;
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.compact {
+  margin-top: 0;
+}
+
+ul {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.8;
+}
+
+code {
+  color: var(--accent-strong);
+}
+
+.auth-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.stack h3 {
+  margin: 0;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+input,
+button {
+  font: inherit;
+}
+
+input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+button {
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: white;
+  cursor: pointer;
+}
+
+.log {
+  margin: 20px 0 0;
+  padding: 16px;
+  min-height: 160px;
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(50, 36, 22, 0.92);
+  color: #f3ede4;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-top: 28px;
+  }
+
+  .hero,
+  .panel {
+    padding: 24px;
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 860px) {
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
+}
