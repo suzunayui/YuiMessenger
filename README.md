@@ -19,21 +19,28 @@ docker compose up --build
 ```
 
 `Caddy` が `80/443` を受けてアプリへリバースプロキシします。  
-ローカルではホスト設定をしない限り TLS ドメイン前提の動作確認はしづらいので、主な想定は VPS 上の `m.yuiroom.net` です。
+主な想定は VPS 上の `m.yuiroom.net` です。
 
 ## VPS-like Test with `m.yuiroom.net`
 
 VPS 上で本番寄りに試すために、[compose.yml](c:/Users/mikan/YuiMessenger/compose.yml) と [infra/Caddyfile](c:/Users/mikan/YuiMessenger/infra/Caddyfile) を `m.yuiroom.net` 前提にしています。
 
-### 1. Production env file
+### 1. Generate `.env`
 
-`.env.production.example` を元に `.env` を作って使います。
+固定パスワードを使わないように、[scripts/init-env.sh](c:/Users/mikan/YuiMessenger/scripts/init-env.sh) で強い値を自動生成できます。
 
 ```bash
-cp .env.production.example .env
+chmod +x scripts/init-env.sh
+./scripts/init-env.sh
 ```
 
-最低でも `POSTGRES_PASSWORD` は変更してください。
+別ドメインで使うときは引数に渡せます。
+
+```bash
+./scripts/init-env.sh m.yuiroom.net
+```
+
+すでに `.env` がある場合は上書きしません。
 
 ### 2. Start on VPS
 
@@ -50,7 +57,7 @@ docker compose --env-file .env up -d --build
 - Postgres container
 - 初期 DB スキーマ
 - パスキー登録と認証のサーバー API
-- ユーザー、フレンド、DM、グループ、ロールのインメモリ API
+- ユーザー、フレンド、DM、グループ、ロールの Postgres API
 - メッセージ送信、削除、リアクション API
 - 通知設定 API
 - オンライン状態 API
@@ -89,7 +96,7 @@ docker compose --env-file .env up -d --build
 
 ## Notes
 
-- 現在の API 実装は開発用のインメモリ実装です
-- 後で Postgres 永続化へ置き換えやすいように、ロジックは [src/store.js](c:/Users/mikan/YuiMessenger/src/store.js) に寄せています
+- 現在の主要データは Postgres に保存されます
+- アプリのデータアクセスは [src/store.js](c:/Users/mikan/YuiMessenger/src/store.js) に寄せています
 - パスキー認証は `@simplewebauthn/server` とブラウザ側バンドルを使っています
 - 既定の `RP ID` は `m.yuiroom.net`、`EXPECTED_ORIGIN` は `https://m.yuiroom.net` です

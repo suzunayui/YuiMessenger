@@ -17,7 +17,6 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 
 const port = Number(process.env.PORT || 3000);
 const databaseUrl = process.env.DATABASE_URL;
-const store = new AppStore();
 const rpID = process.env.RP_ID || "localhost";
 const rpName = process.env.RP_NAME || "YuiMessenger";
 const expectedOrigin = process.env.EXPECTED_ORIGIN || `http://${rpID}:${port}`;
@@ -25,25 +24,21 @@ const expectedOrigin = process.env.EXPECTED_ORIGIN || `http://${rpID}:${port}`;
 app.use(express.json());
 app.use(express.static("public"));
 
-let pool = null;
-
-if (databaseUrl) {
-  pool = new Pool({
-    connectionString: databaseUrl
-  });
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is required");
 }
 
-app.get("/api/health", async (_req, res) => {
-  const status = {
-    app: "ok",
-    database: "disabled",
-    websocket: "ok"
-  };
+const pool = new Pool({
+  connectionString: databaseUrl
+});
 
+const store = new AppStore(pool);
+
+app.get("/api/health", async (_req, res) => {
+  const status = { app: "ok", database: "ok", websocket: "ok" };
   if (pool) {
     try {
       await pool.query("SELECT 1");
-      status.database = "ok";
     } catch (error) {
       status.database = "error";
       status.error = error.message;
@@ -64,439 +59,272 @@ app.get("/api/spec-summary", (_req, res) => {
   });
 });
 
-app.get("/api/users", (_req, res) => {
-  res.json(store.listUsers());
-});
-
-app.post("/api/users", (req, res) => {
-  try {
-    const user = store.createUser(req.body);
-    res.status(201).json(user);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.get("/api/users/:userId/passkeys", (req, res) => {
-  try {
-    res.json(store.listPasskeysForUser(req.params.userId));
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.get("/api/users/:userId/presence", (req, res) => {
-  try {
-    res.json(store.getPresence(req.params.userId));
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.patch("/api/users/:userId/presence", (req, res) => {
-  try {
-    const presence = store.updatePresence({
-      userId: req.params.userId,
-      status: req.body.status,
-      isVisible: req.body.isVisible,
-      isManual: req.body.isManual
-    });
-    broadcast({
-      type: "presence.updated",
-      payload: presence
-    });
-    res.json(presence);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.get("/api/users/:userId/notifications", (req, res) => {
-  try {
-    res.json(store.listNotificationSettings(req.params.userId));
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.post("/api/users/:userId/notifications", (req, res) => {
-  try {
-    const setting = store.setNotificationSetting({
-      actorUserId: req.params.userId,
-      scopeType: req.body.scopeType,
-      scopeId: req.body.scopeId,
-      enabled: req.body.enabled
-    });
-    res.json(setting);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.get("/api/users/:userId/unreads", (req, res) => {
-  try {
-    res.json(store.getUnreadSummary(req.params.userId));
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.post("/api/passkeys/register/options", async (req, res) => {
-  try {
-    const user = store.requireUser(req.body.userId);
-    const userPasskeys = store.listPasskeysForUser(user.id);
-
-    const options = await generateRegistrationOptions({
-      rpName,
-      rpID,
-      userName: user.userId,
-      userDisplayName: user.displayName,
-      userID: isoUint8Array.fromUTF8String(user.webauthnUserID),
-      timeout: 60000,
-      attestationType: "none",
-      excludeCredentials: userPasskeys.map((passkey) => ({
-        id: passkey.credentialId,
-        transports: passkey.transports
-      })),
-      authenticatorSelection: {
-        residentKey: "required",
-        userVerification: "required"
-      },
-      supportedAlgorithmIDs: [-7, -257]
-    });
-
-    store.saveRegistrationChallenge(user.id, options.challenge);
-    res.json(options);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
-
-app.post("/api/passkeys/register/verify", async (req, res) => {
-  try {
-    const user = store.requireUser(req.body.userId);
-    const expectedChallenge = store.readRegistrationChallenge(user.id);
-
-    if (!expectedChallenge) {
-      throw new Error("registration challenge not found");
+function wrap(handler) {
+  return async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      sendBadRequest(res, error);
     }
+  };
+}
 
-    const verification = await verifyRegistrationResponse({
-      response: req.body.response,
-      expectedChallenge,
-      expectedOrigin,
-      expectedRPID: rpID,
-      requireUserVerification: true
-    });
+app.get("/api/users", wrap(async (_req, res) => {
+  res.json(await store.listUsers());
+}));
 
-    if (!verification.verified || !verification.registrationInfo) {
-      throw new Error("passkey registration could not be verified");
-    }
+app.post("/api/users", wrap(async (req, res) => {
+  res.status(201).json(await store.createUser(req.body));
+}));
 
-    const registrationInfo = verification.registrationInfo;
+app.get("/api/users/:userId/passkeys", wrap(async (req, res) => {
+  res.json(await store.listPasskeysForUser(req.params.userId));
+}));
 
-    const passkey = store.addPasskey({
-      userId: user.id,
-      credentialId: registrationInfo.credential.id,
-      publicKey: registrationInfo.credential.publicKey,
-      counter: registrationInfo.credential.counter,
-      transports: req.body.response.response.transports || [],
-      deviceType: registrationInfo.credentialDeviceType,
-      backedUp: registrationInfo.credentialBackedUp
-    });
+app.get("/api/users/:userId/presence", wrap(async (req, res) => {
+  res.json(await store.getPresence(req.params.userId));
+}));
 
-    store.clearRegistrationChallenge(user.id);
+app.patch("/api/users/:userId/presence", wrap(async (req, res) => {
+  const presence = await store.updatePresence({
+    userId: req.params.userId,
+    status: req.body.status,
+    isVisible: req.body.isVisible,
+    isManual: req.body.isManual
+  });
+  broadcast({ type: "presence.updated", payload: presence });
+  res.json(presence);
+}));
 
-    res.json({
-      verified: true,
-      passkey: serializePasskey(passkey)
-    });
-  } catch (error) {
-    sendBadRequest(res, error);
+app.get("/api/users/:userId/notifications", wrap(async (req, res) => {
+  res.json(await store.listNotificationSettings(req.params.userId));
+}));
+
+app.post("/api/users/:userId/notifications", wrap(async (req, res) => {
+  res.json(await store.setNotificationSetting({
+    actorUserId: req.params.userId,
+    scopeType: req.body.scopeType,
+    scopeId: req.body.scopeId,
+    enabled: req.body.enabled
+  }));
+}));
+
+app.get("/api/users/:userId/unreads", wrap(async (req, res) => {
+  res.json(await store.getUnreadSummary(req.params.userId));
+}));
+
+app.post("/api/passkeys/register/options", wrap(async (req, res) => {
+  const user = await store.requireUser(req.body.userId);
+  const userPasskeys = await store.listPasskeysForUser(user.id);
+  const options = await generateRegistrationOptions({
+    rpName,
+    rpID,
+    userName: user.userId,
+    userDisplayName: user.displayName,
+    userID: isoUint8Array.fromUTF8String(user.webauthnUserID),
+    timeout: 60000,
+    attestationType: "none",
+    excludeCredentials: userPasskeys.map((passkey) => ({ id: passkey.credentialId, transports: passkey.transports })),
+    authenticatorSelection: { residentKey: "required", userVerification: "required" },
+    supportedAlgorithmIDs: [-7, -257]
+  });
+  await store.saveRegistrationChallenge(user.id, options.challenge);
+  res.json(options);
+}));
+
+app.post("/api/passkeys/register/verify", wrap(async (req, res) => {
+  const user = await store.requireUser(req.body.userId);
+  const expectedChallenge = await store.readRegistrationChallenge(user.id);
+  if (!expectedChallenge) {
+    throw new Error("registration challenge not found");
   }
-});
-
-app.post("/api/passkeys/authenticate/options", async (req, res) => {
-  try {
-    const user = store.requireUser(req.body.userId);
-    const userPasskeys = store.listPasskeysForUser(user.id);
-
-    if (userPasskeys.length === 0) {
-      throw new Error("no passkeys registered for this user");
-    }
-
-    const options = await generateAuthenticationOptions({
-      rpID,
-      timeout: 60000,
-      allowCredentials: userPasskeys.map((passkey) => ({
-        id: passkey.credentialId,
-        transports: passkey.transports
-      })),
-      userVerification: "required"
-    });
-
-    store.saveAuthenticationChallenge(user.id, options.challenge);
-    res.json(options);
-  } catch (error) {
-    sendBadRequest(res, error);
+  const verification = await verifyRegistrationResponse({
+    response: req.body.response,
+    expectedChallenge,
+    expectedOrigin,
+    expectedRPID: rpID,
+    requireUserVerification: true
+  });
+  if (!verification.verified || !verification.registrationInfo) {
+    throw new Error("passkey registration could not be verified");
   }
-});
+  const info = verification.registrationInfo;
+  const passkey = await store.addPasskey({
+    userId: user.id,
+    credentialId: info.credential.id,
+    publicKey: info.credential.publicKey,
+    counter: info.credential.counter,
+    transports: req.body.response.response.transports || [],
+    deviceType: info.credentialDeviceType,
+    backedUp: info.credentialBackedUp
+  });
+  await store.clearRegistrationChallenge(user.id);
+  res.json({ verified: true, passkey: serializePasskey(passkey) });
+}));
 
-app.post("/api/passkeys/authenticate/verify", async (req, res) => {
-  try {
-    const user = store.requireUser(req.body.userId);
-    const expectedChallenge = store.readAuthenticationChallenge(user.id);
-
-    if (!expectedChallenge) {
-      throw new Error("authentication challenge not found");
-    }
-
-    const credentialId = req.body.response.id;
-    const passkey = store.findPasskeyByCredentialId(credentialId);
-
-    if (!passkey || passkey.userId !== user.id) {
-      throw new Error("passkey not found for this user");
-    }
-
-    const verification = await verifyAuthenticationResponse({
-      response: req.body.response,
-      expectedChallenge,
-      expectedOrigin,
-      expectedRPID: rpID,
-      credential: {
-        id: passkey.credentialId,
-        publicKey: passkey.publicKey,
-        counter: passkey.counter,
-        transports: passkey.transports
-      },
-      requireUserVerification: true
-    });
-
-    if (!verification.verified) {
-      throw new Error("passkey authentication could not be verified");
-    }
-
-    store.updatePasskeyCounter(passkey.credentialId, verification.authenticationInfo.newCounter);
-    store.clearAuthenticationChallenge(user.id);
-
-    res.json({
-      verified: true,
-      user: {
-        id: user.id,
-        userId: user.userId,
-        displayName: user.displayName
-      }
-    });
-  } catch (error) {
-    sendBadRequest(res, error);
+app.post("/api/passkeys/authenticate/options", wrap(async (req, res) => {
+  const user = await store.requireUser(req.body.userId);
+  const userPasskeys = await store.listPasskeysForUser(user.id);
+  if (userPasskeys.length === 0) {
+    throw new Error("no passkeys registered for this user");
   }
-});
+  const options = await generateAuthenticationOptions({
+    rpID,
+    timeout: 60000,
+    allowCredentials: userPasskeys.map((passkey) => ({ id: passkey.credentialId, transports: passkey.transports })),
+    userVerification: "required"
+  });
+  await store.saveAuthenticationChallenge(user.id, options.challenge);
+  res.json(options);
+}));
 
-app.get("/api/users/:userId/friendships", (req, res) => {
-  try {
-    const data = store.listFriendshipsForUser(req.params.userId);
-    res.json(data);
-  } catch (error) {
-    sendBadRequest(res, error);
+app.post("/api/passkeys/authenticate/verify", wrap(async (req, res) => {
+  const user = await store.requireUser(req.body.userId);
+  const expectedChallenge = await store.readAuthenticationChallenge(user.id);
+  if (!expectedChallenge) {
+    throw new Error("authentication challenge not found");
   }
-});
-
-app.post("/api/friend-requests", (req, res) => {
-  try {
-    const data = store.createFriendRequest(req.body);
-    res.status(201).json(data);
-  } catch (error) {
-    sendBadRequest(res, error);
+  const passkey = await store.findPasskeyByCredentialId(req.body.response.id);
+  if (!passkey || passkey.userId !== user.id) {
+    throw new Error("passkey not found for this user");
   }
-});
-
-app.post("/api/friend-requests/:requestId/respond", (req, res) => {
-  try {
-    const data = store.respondToFriendRequest({
-      requestId: req.params.requestId,
-      actorUserId: req.body.actorUserId,
-      action: req.body.action
-    });
-    res.json(data);
-  } catch (error) {
-    sendBadRequest(res, error);
+  const verification = await verifyAuthenticationResponse({
+    response: req.body.response,
+    expectedChallenge,
+    expectedOrigin,
+    expectedRPID: rpID,
+    credential: { id: passkey.credentialId, publicKey: passkey.publicKey, counter: passkey.counter, transports: passkey.transports },
+    requireUserVerification: true
+  });
+  if (!verification.verified) {
+    throw new Error("passkey authentication could not be verified");
   }
-});
+  await store.updatePasskeyCounter(passkey.credentialId, verification.authenticationInfo.newCounter);
+  await store.clearAuthenticationChallenge(user.id);
+  res.json({ verified: true, user: { id: user.id, userId: user.userId, displayName: user.displayName } });
+}));
 
-app.post("/api/blocks", (req, res) => {
-  try {
-    const data = store.blockUser(req.body);
-    res.status(201).json(data);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.get("/api/users/:userId/friendships", wrap(async (req, res) => {
+  res.json(await store.listFriendshipsForUser(req.params.userId));
+}));
 
-app.post("/api/chats/dm", (req, res) => {
-  try {
-    const chat = store.createDirectMessageChat(req.body);
-    res.status(201).json(chat);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/friend-requests", wrap(async (req, res) => {
+  res.status(201).json(await store.createFriendRequest(req.body));
+}));
 
-app.post("/api/chats/group", (req, res) => {
-  try {
-    const chat = store.createGroupChat(req.body);
-    res.status(201).json(chat);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/friend-requests/:requestId/respond", wrap(async (req, res) => {
+  res.json(await store.respondToFriendRequest({
+    requestId: req.params.requestId,
+    actorUserId: req.body.actorUserId,
+    action: req.body.action
+  }));
+}));
 
-app.get("/api/chats/:chatId", (req, res) => {
-  try {
-    res.json(store.requireChat(req.params.chatId));
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/blocks", wrap(async (req, res) => {
+  res.status(201).json(await store.blockUser(req.body));
+}));
 
-app.post("/api/chats/:chatId/roles", (req, res) => {
-  try {
-    const role = store.addGroupRole({
-      chatId: req.params.chatId,
-      actorUserId: req.body.actorUserId,
-      name: req.body.name,
-      permissions: req.body.permissions || []
-    });
-    res.status(201).json(role);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/chats/dm", wrap(async (req, res) => {
+  res.status(201).json(await store.createDirectMessageChat(req.body));
+}));
 
-app.post("/api/chats/:chatId/roles/:roleId/assign", (req, res) => {
-  try {
-    const role = store.assignRole({
-      chatId: req.params.chatId,
-      roleId: req.params.roleId,
-      actorUserId: req.body.actorUserId,
-      targetUserId: req.body.targetUserId
-    });
-    res.json(role);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/chats/group", wrap(async (req, res) => {
+  res.status(201).json(await store.createGroupChat(req.body));
+}));
 
-app.get("/api/chats/:chatId/messages", (req, res) => {
-  try {
-    const messages = store.listMessages({
-      chatId: req.params.chatId,
-      viewerUserId: req.query.viewerUserId
-    });
-    res.json(messages);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.get("/api/chats/:chatId", wrap(async (req, res) => {
+  res.json(await store.requireChat(req.params.chatId));
+}));
 
-app.post("/api/chats/:chatId/read-state", (req, res) => {
-  try {
-    const state = store.markChatRead({
-      chatId: req.params.chatId,
-      actorUserId: req.body.actorUserId,
-      lastReadMessageId: req.body.lastReadMessageId
-    });
-    res.json(state);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/chats/:chatId/roles", wrap(async (req, res) => {
+  res.status(201).json(await store.addGroupRole({
+    chatId: req.params.chatId,
+    actorUserId: req.body.actorUserId,
+    name: req.body.name,
+    permissions: req.body.permissions || []
+  }));
+}));
 
-app.post("/api/chats/:chatId/messages", (req, res) => {
-  try {
-    const message = store.createMessage({
-      chatId: req.params.chatId,
-      actorUserId: req.body.actorUserId,
-      body: req.body.body
-    });
-    broadcast({
-      type: "message.created",
-      payload: message
-    });
-    res.status(201).json(message);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/chats/:chatId/roles/:roleId/assign", wrap(async (req, res) => {
+  res.json(await store.assignRole({
+    chatId: req.params.chatId,
+    roleId: req.params.roleId,
+    actorUserId: req.body.actorUserId,
+    targetUserId: req.body.targetUserId
+  }));
+}));
 
-app.delete("/api/chats/:chatId/messages/:messageId", (req, res) => {
-  try {
-    const message = store.deleteMessage({
-      chatId: req.params.chatId,
-      messageId: req.params.messageId,
-      actorUserId: req.query.actorUserId
-    });
-    broadcast({
-      type: "message.deleted",
-      payload: message
-    });
-    res.json(message);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.get("/api/chats/:chatId/messages", wrap(async (req, res) => {
+  res.json(await store.listMessages({
+    chatId: req.params.chatId,
+    viewerUserId: req.query.viewerUserId
+  }));
+}));
 
-app.post("/api/chats/:chatId/messages/:messageId/reactions", (req, res) => {
-  try {
-    const reaction = store.addReaction({
-      chatId: req.params.chatId,
-      messageId: req.params.messageId,
-      actorUserId: req.body.actorUserId,
-      emoji: req.body.emoji
-    });
-    broadcast({
-      type: "reaction.created",
-      payload: reaction
-    });
-    res.status(201).json(reaction);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.post("/api/chats/:chatId/read-state", wrap(async (req, res) => {
+  res.json(await store.markChatRead({
+    chatId: req.params.chatId,
+    actorUserId: req.body.actorUserId,
+    lastReadMessageId: req.body.lastReadMessageId
+  }));
+}));
 
-app.delete("/api/chats/:chatId/messages/:messageId/reactions", (req, res) => {
-  try {
-    const result = store.removeReaction({
-      chatId: req.params.chatId,
-      messageId: req.params.messageId,
-      actorUserId: req.query.actorUserId,
+app.post("/api/chats/:chatId/messages", wrap(async (req, res) => {
+  const message = await store.createMessage({
+    chatId: req.params.chatId,
+    actorUserId: req.body.actorUserId,
+    body: req.body.body
+  });
+  broadcast({ type: "message.created", payload: message });
+  res.status(201).json(message);
+}));
+
+app.delete("/api/chats/:chatId/messages/:messageId", wrap(async (req, res) => {
+  const message = await store.deleteMessage({
+    chatId: req.params.chatId,
+    messageId: req.params.messageId,
+    actorUserId: req.query.actorUserId
+  });
+  broadcast({ type: "message.deleted", payload: message });
+  res.json(message);
+}));
+
+app.post("/api/chats/:chatId/messages/:messageId/reactions", wrap(async (req, res) => {
+  const reaction = await store.addReaction({
+    chatId: req.params.chatId,
+    messageId: req.params.messageId,
+    actorUserId: req.body.actorUserId,
+    emoji: req.body.emoji
+  });
+  broadcast({ type: "reaction.created", payload: reaction });
+  res.status(201).json(reaction);
+}));
+
+app.delete("/api/chats/:chatId/messages/:messageId/reactions", wrap(async (req, res) => {
+  const result = await store.removeReaction({
+    chatId: req.params.chatId,
+    messageId: req.params.messageId,
+    actorUserId: req.query.actorUserId,
+    emoji: req.query.emoji
+  });
+  broadcast({
+    type: "reaction.deleted",
+    payload: {
+      chatId: Number(req.params.chatId),
+      messageId: Number(req.params.messageId),
+      actorUserId: Number(req.query.actorUserId),
       emoji: req.query.emoji
-    });
-    broadcast({
-      type: "reaction.deleted",
-      payload: {
-        chatId: Number(req.params.chatId),
-        messageId: Number(req.params.messageId),
-        actorUserId: req.query.actorUserId,
-        emoji: req.query.emoji
-      }
-    });
-    res.json(result);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+    }
+  });
+  res.json(result);
+}));
 
-app.get("/api/chats/:chatId/audit-logs", (req, res) => {
-  try {
-    const logs = store.listAuditLogs({
-      chatId: req.params.chatId,
-      actorUserId: req.query.actorUserId
-    });
-    res.json(logs);
-  } catch (error) {
-    sendBadRequest(res, error);
-  }
-});
+app.get("/api/chats/:chatId/audit-logs", wrap(async (req, res) => {
+  res.json(await store.listAuditLogs({
+    chatId: req.params.chatId,
+    actorUserId: req.query.actorUserId
+  }));
+}));
 
 wss.on("connection", (socket) => {
   socket.send(

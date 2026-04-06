@@ -1,746 +1,715 @@
 const crypto = require("crypto");
 
 const USER_ID_PATTERN = /^(?![_-])[A-Za-z0-9_-]{3,32}(?<![_-])$/;
-
-const ROLE_PERMISSIONS = [
-  "canDeleteMessages",
-  "canKickMembers",
-  "canEditGroupName",
-  "canInviteMembers",
-  "canManageRoles",
-  "canViewAuditLogs",
-  "canDeleteAuditLogs"
-];
+const ROLE_PERMISSIONS = ["canDeleteMessages", "canKickMembers", "canEditGroupName", "canInviteMembers", "canManageRoles", "canViewAuditLogs", "canDeleteAuditLogs"];
 
 class AppStore {
-  constructor() {
-    this.users = [];
-    this.friendships = [];
-    this.chats = [];
-    this.messages = [];
-    this.reactions = [];
-    this.auditLogs = [];
-    this.passkeys = [];
-    this.presenceStates = new Map();
-    this.notificationSettings = [];
-    this.readStates = [];
-    this.passkeyChallenges = {
-      registration: new Map(),
-      authentication: new Map()
-    };
-    this.counters = {
-      user: 1,
-      friendship: 1,
-      chat: 1,
-      role: 1,
-      message: 1,
-      reaction: 1,
-      auditLog: 1
-    };
+  constructor(pool) {
+    this.pool = pool;
   }
 
-  createUser({ userId, displayName }) {
+  async createUser({ userId, displayName }) {
     this.assertUserId(userId);
-
     if (!displayName || typeof displayName !== "string") {
       throw new Error("displayName is required");
     }
 
-    if (this.findUserByUserId(userId)) {
-      throw new Error("userId already exists");
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query(
+        `INSERT INTO users (user_id, display_name, webauthn_user_id)
+         VALUES ($1, $2, $3)
+         RETURNING id, user_id, display_name, webauthn_user_id, created_at`,
+        [userId, displayName, `wa-${crypto.randomUUID()}`]
+      );
+      const user = mapUser(inserted.rows[0]);
+      await client.query(
+        `INSERT INTO presence_states (user_id, status, is_visible, is_manual)
+         VALUES ($1, 'offline', TRUE, FALSE)`,
+        [user.id]
+      );
+      await client.query("COMMIT");
+      return user;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error.code === "23505") {
+        throw new Error("userId already exists");
+      }
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const user = {
-      id: this.nextId("user"),
-      userId,
-      displayName,
-      webauthnUserID: `wa-${crypto.randomUUID()}`,
-      createdAt: new Date().toISOString()
-    };
-
-    this.users.push(user);
-    this.presenceStates.set(user.id, {
-      userId: user.id,
-      status: "offline",
-      isVisible: true,
-      isManual: false,
-      updatedAt: new Date().toISOString()
-    });
-    return user;
   }
 
-  listUsers() {
-    return this.users;
+  async listUsers() {
+    const result = await this.pool.query(
+      `SELECT id, user_id, display_name, webauthn_user_id, created_at
+       FROM users ORDER BY id ASC`
+    );
+    return result.rows.map(mapUser);
   }
 
-  listPasskeysForUser(userId) {
-    const user = this.requireUser(userId);
-    return this.passkeys.filter((passkey) => passkey.userId === user.id);
+  async requireUser(userId) {
+    const numeric = Number(userId);
+    const result = Number.isFinite(numeric)
+      ? await this.pool.query(`SELECT id, user_id, display_name, webauthn_user_id, created_at FROM users WHERE id = $1`, [numeric])
+      : await this.pool.query(`SELECT id, user_id, display_name, webauthn_user_id, created_at FROM users WHERE user_id = $1`, [String(userId)]);
+    if (result.rowCount === 0) {
+      throw new Error("user not found");
+    }
+    return mapUser(result.rows[0]);
   }
 
-  getPresence(userId) {
-    const user = this.requireUser(userId);
-    return this.presenceStates.get(user.id);
+  async listPasskeysForUser(userId) {
+    const user = await this.requireUser(userId);
+    const result = await this.pool.query(`SELECT * FROM passkeys WHERE user_id = $1 ORDER BY created_at ASC`, [user.id]);
+    return result.rows.map(mapPasskey);
   }
 
-  updatePresence({ userId, status, isVisible, isManual }) {
-    const user = this.requireUser(userId);
-    const current = this.getPresence(user.id);
+  async saveRegistrationChallenge(userId, challenge) {
+    return this.saveChallenge(userId, "registration", challenge);
+  }
+
+  async readRegistrationChallenge(userId) {
+    return this.readChallenge(userId, "registration");
+  }
+
+  async clearRegistrationChallenge(userId) {
+    return this.clearChallenge(userId, "registration");
+  }
+
+  async saveAuthenticationChallenge(userId, challenge) {
+    return this.saveChallenge(userId, "authentication", challenge);
+  }
+
+  async readAuthenticationChallenge(userId) {
+    return this.readChallenge(userId, "authentication");
+  }
+
+  async clearAuthenticationChallenge(userId) {
+    return this.clearChallenge(userId, "authentication");
+  }
+
+  async addPasskey({ userId, credentialId, publicKey, counter, transports = [], deviceType, backedUp }) {
+    const user = await this.requireUser(userId);
+    try {
+      const result = await this.pool.query(
+        `INSERT INTO passkeys (
+           id, user_id, webauthn_user_id, credential_id, public_key, counter, transports, device_type, backed_up
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         RETURNING *`,
+        [crypto.randomUUID(), user.id, user.webauthnUserID, credentialId, publicKey, counter, JSON.stringify(transports), deviceType || null, Boolean(backedUp)]
+      );
+      return mapPasskey(result.rows[0]);
+    } catch (error) {
+      if (error.code === "23505") {
+        throw new Error("passkey already registered");
+      }
+      throw error;
+    }
+  }
+
+  async findPasskeyByCredentialId(credentialId) {
+    const result = await this.pool.query(`SELECT * FROM passkeys WHERE credential_id = $1`, [credentialId]);
+    return result.rowCount === 0 ? null : mapPasskey(result.rows[0]);
+  }
+
+  async updatePasskeyCounter(credentialId, counter) {
+    const result = await this.pool.query(
+      `UPDATE passkeys SET counter = $2, updated_at = NOW() WHERE credential_id = $1 RETURNING *`,
+      [credentialId, counter]
+    );
+    if (result.rowCount === 0) {
+      throw new Error("passkey not found");
+    }
+    return mapPasskey(result.rows[0]);
+  }
+
+  async getPresence(userId) {
+    const user = await this.requireUser(userId);
+    const result = await this.pool.query(
+      `SELECT user_id, status, is_visible, is_manual, updated_at FROM presence_states WHERE user_id = $1`,
+      [user.id]
+    );
+    if (result.rowCount === 0) {
+      throw new Error("presence not found");
+    }
+    return mapPresence(result.rows[0]);
+  }
+
+  async updatePresence({ userId, status, isVisible, isManual }) {
+    const user = await this.requireUser(userId);
+    const current = await this.getPresence(user.id);
     const nextStatus = status || current.status;
-
     if (!["online", "offline", "away"].includes(nextStatus)) {
       throw new Error("status must be online, offline, or away");
     }
-
-    const next = {
-      ...current,
-      status: nextStatus,
-      isVisible: typeof isVisible === "boolean" ? isVisible : current.isVisible,
-      isManual: typeof isManual === "boolean" ? isManual : current.isManual,
-      updatedAt: new Date().toISOString()
-    };
-
-    this.presenceStates.set(user.id, next);
-    return next;
+    const result = await this.pool.query(
+      `UPDATE presence_states
+       SET status = $2, is_visible = $3, is_manual = $4, updated_at = NOW()
+       WHERE user_id = $1
+       RETURNING user_id, status, is_visible, is_manual, updated_at`,
+      [user.id, nextStatus, typeof isVisible === "boolean" ? isVisible : current.isVisible, typeof isManual === "boolean" ? isManual : current.isManual]
+    );
+    return mapPresence(result.rows[0]);
   }
 
-  setNotificationSetting({
-    actorUserId,
-    scopeType,
-    scopeId,
-    enabled
-  }) {
-    const actor = this.requireUser(actorUserId);
-
+  async setNotificationSetting({ actorUserId, scopeType, scopeId, enabled }) {
+    const actor = await this.requireUser(actorUserId);
     if (!["dm", "group"].includes(scopeType)) {
       throw new Error("scopeType must be dm or group");
     }
-
-    const chat = this.requireChat(scopeId);
-
+    const chat = await this.requireChat(scopeId);
     if (chat.kind !== scopeType) {
       throw new Error("scopeType does not match chat kind");
     }
-
     if (!chat.memberIds.includes(actor.id)) {
       throw new Error("actor is not a member of this chat");
     }
+    const result = await this.pool.query(
+      `INSERT INTO notification_settings (user_id, scope_type, scope_id, enabled)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, scope_type, scope_id)
+       DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()
+       RETURNING user_id, scope_type, scope_id, enabled, updated_at`,
+      [actor.id, scopeType, chat.id, Boolean(enabled)]
+    );
+    return mapNotificationSetting(result.rows[0]);
+  }
 
-    let setting = this.notificationSettings.find((entry) => {
-      return entry.userId === actor.id && entry.scopeType === scopeType && entry.scopeId === chat.id;
-    });
+  async listNotificationSettings(userId) {
+    const user = await this.requireUser(userId);
+    const result = await this.pool.query(
+      `SELECT user_id, scope_type, scope_id, enabled, updated_at
+       FROM notification_settings WHERE user_id = $1 ORDER BY scope_type, scope_id`,
+      [user.id]
+    );
+    return result.rows.map(mapNotificationSetting);
+  }
 
-    if (!setting) {
-      setting = {
-        userId: actor.id,
-        scopeType,
-        scopeId: chat.id,
-        enabled: true,
-        updatedAt: new Date().toISOString()
-      };
-      this.notificationSettings.push(setting);
+  async getUnreadSummary(userId) {
+    const user = await this.requireUser(userId);
+    const blockedIds = await this.blockedUserIdsFor(user.id);
+    const memberResult = await this.pool.query(
+      `SELECT c.id, c.kind
+       FROM chats c JOIN chat_members cm ON cm.chat_id = c.id
+       WHERE cm.user_id = $1 ORDER BY c.id`,
+      [user.id]
+    );
+    const summaries = [];
+    for (const row of memberResult.rows) {
+      const readState = await this.getReadState(row.id, user.id);
+      const unreadResult = blockedIds.length > 0
+        ? await this.pool.query(
+            `SELECT COUNT(*)::int AS unread_count
+             FROM messages
+             WHERE chat_id = $1 AND sender_user_id <> $2 AND id > $3 AND NOT (sender_user_id = ANY($4::bigint[]))`,
+            [row.id, user.id, readState?.lastReadMessageId || 0, blockedIds]
+          )
+        : await this.pool.query(
+            `SELECT COUNT(*)::int AS unread_count
+             FROM messages
+             WHERE chat_id = $1 AND sender_user_id <> $2 AND id > $3`,
+            [row.id, user.id, readState?.lastReadMessageId || 0]
+          );
+      summaries.push({ chatId: Number(row.id), kind: row.kind, unreadCount: unreadResult.rows[0].unread_count });
     }
-
-    setting.enabled = Boolean(enabled);
-    setting.updatedAt = new Date().toISOString();
-    return setting;
+    return summaries;
   }
 
-  listNotificationSettings(userId) {
-    const user = this.requireUser(userId);
-    return this.notificationSettings.filter((entry) => entry.userId === user.id);
-  }
-
-  getUnreadSummary(userId) {
-    const user = this.requireUser(userId);
-    const chatIds = this.chats
-      .filter((chat) => chat.memberIds.includes(user.id))
-      .map((chat) => chat.id);
-
-    return chatIds.map((chatId) => {
-      const lastReadMessageId = this.getReadState(chatId, user.id)?.lastReadMessageId || 0;
-      const unreadCount = this.messages.filter((message) => {
-        return (
-          message.chatId === chatId &&
-          message.senderUserId !== user.id &&
-          message.id > lastReadMessageId &&
-          !this.blockedUserIdsFor(user.id).has(message.senderUserId)
-        );
-      }).length;
-
-      const chat = this.requireChat(chatId);
-      return {
-        chatId,
-        kind: chat.kind,
-        unreadCount
-      };
-    });
-  }
-
-  markChatRead({ chatId, actorUserId, lastReadMessageId }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireChat(chatId);
-
+  async markChatRead({ chatId, actorUserId, lastReadMessageId }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireChat(chatId);
     if (!chat.memberIds.includes(actor.id)) {
       throw new Error("actor is not a member of this chat");
     }
-
-    let state = this.getReadState(chat.id, actor.id);
-
-    if (!state) {
-      state = {
-        chatId: chat.id,
-        userId: actor.id,
-        lastReadMessageId: 0,
-        updatedAt: new Date().toISOString()
-      };
-      this.readStates.push(state);
-    }
-
-    state.lastReadMessageId = Number(lastReadMessageId || 0);
-    state.updatedAt = new Date().toISOString();
-    return state;
+    const result = await this.pool.query(
+      `INSERT INTO read_states (chat_id, user_id, last_read_message_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (chat_id, user_id)
+       DO UPDATE SET last_read_message_id = EXCLUDED.last_read_message_id, updated_at = NOW()
+       RETURNING chat_id, user_id, last_read_message_id, updated_at`,
+      [chat.id, actor.id, Number(lastReadMessageId || 0)]
+    );
+    return mapReadState(result.rows[0]);
   }
 
-  saveRegistrationChallenge(userId, challenge) {
-    const user = this.requireUser(userId);
-    this.passkeyChallenges.registration.set(user.id, challenge);
-    return challenge;
-  }
-
-  readRegistrationChallenge(userId) {
-    const user = this.requireUser(userId);
-    return this.passkeyChallenges.registration.get(user.id) || null;
-  }
-
-  clearRegistrationChallenge(userId) {
-    const user = this.requireUser(userId);
-    this.passkeyChallenges.registration.delete(user.id);
-  }
-
-  saveAuthenticationChallenge(userId, challenge) {
-    const user = this.requireUser(userId);
-    this.passkeyChallenges.authentication.set(user.id, challenge);
-    return challenge;
-  }
-
-  readAuthenticationChallenge(userId) {
-    const user = this.requireUser(userId);
-    return this.passkeyChallenges.authentication.get(user.id) || null;
-  }
-
-  clearAuthenticationChallenge(userId) {
-    const user = this.requireUser(userId);
-    this.passkeyChallenges.authentication.delete(user.id);
-  }
-
-  addPasskey({
-    userId,
-    credentialId,
-    publicKey,
-    counter,
-    transports = [],
-    deviceType,
-    backedUp
-  }) {
-    const user = this.requireUser(userId);
-
-    const existing = this.passkeys.find((passkey) => passkey.credentialId === credentialId);
-    if (existing) {
-      throw new Error("passkey already registered");
-    }
-
-    const passkey = {
-      id: crypto.randomUUID(),
-      userId: user.id,
-      webauthnUserID: user.webauthnUserID,
-      credentialId,
-      publicKey,
-      counter,
-      transports,
-      deviceType,
-      backedUp,
-      createdAt: new Date().toISOString()
-    };
-
-    this.passkeys.push(passkey);
-    return passkey;
-  }
-
-  findPasskeyByCredentialId(credentialId) {
-    return this.passkeys.find((passkey) => passkey.credentialId === credentialId) || null;
-  }
-
-  updatePasskeyCounter(credentialId, counter) {
-    const passkey = this.findPasskeyByCredentialId(credentialId);
-
-    if (!passkey) {
-      throw new Error("passkey not found");
-    }
-
-    passkey.counter = counter;
-    passkey.updatedAt = new Date().toISOString();
-    return passkey;
-  }
-
-  createFriendRequest({ requesterUserId, addresseeUserId }) {
-    const requester = this.requireUser(requesterUserId);
-    const addressee = this.requireUser(addresseeUserId);
-
+  async createFriendRequest({ requesterUserId, addresseeUserId }) {
+    const requester = await this.requireUser(requesterUserId);
+    const addressee = await this.requireUser(addresseeUserId);
     if (requester.id === addressee.id) {
       throw new Error("cannot friend yourself");
     }
-
-    if (this.isBlockedBetween(requester.id, addressee.id)) {
+    if (await this.isBlockedBetween(requester.id, addressee.id)) {
       throw new Error("friend request not allowed because one user blocked the other");
     }
-
-    if (this.findFriendshipPair(requester.id, addressee.id)) {
+    if (await this.findFriendshipPair(requester.id, addressee.id)) {
       throw new Error("friendship or request already exists");
     }
-
-    const friendship = {
-      id: this.nextId("friendship"),
-      requesterUserId: requester.id,
-      addresseeUserId: addressee.id,
-      status: "pending",
-      createdAt: new Date().toISOString()
-    };
-
-    this.friendships.push(friendship);
-    return friendship;
+    const result = await this.pool.query(
+      `INSERT INTO friendships (requester_user_id, addressee_user_id, status)
+       VALUES ($1, $2, 'pending')
+       RETURNING *`,
+      [requester.id, addressee.id]
+    );
+    return mapFriendship(result.rows[0]);
   }
 
-  respondToFriendRequest({ requestId, actorUserId, action }) {
-    const actor = this.requireUser(actorUserId);
-    const friendship = this.friendships.find((entry) => entry.id === Number(requestId));
-
-    if (!friendship || friendship.status !== "pending") {
+  async respondToFriendRequest({ requestId, actorUserId, action }) {
+    const actor = await this.requireUser(actorUserId);
+    const result = await this.pool.query(`SELECT * FROM friendships WHERE id = $1`, [Number(requestId)]);
+    if (result.rowCount === 0 || result.rows[0].status !== "pending") {
       throw new Error("pending friend request not found");
     }
-
-    if (friendship.addresseeUserId !== actor.id) {
+    const friendship = result.rows[0];
+    if (Number(friendship.addressee_user_id) !== actor.id) {
       throw new Error("only the addressee can respond");
     }
-
     if (!["accepted", "rejected"].includes(action)) {
       throw new Error("action must be accepted or rejected");
     }
-
     if (action === "accepted") {
-      friendship.status = "accepted";
-      friendship.acceptedAt = new Date().toISOString();
-      return friendship;
+      const updated = await this.pool.query(
+        `UPDATE friendships
+         SET status = 'accepted', accepted_at = NOW(), updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [friendship.id]
+      );
+      return mapFriendship(updated.rows[0]);
     }
-
-    this.friendships = this.friendships.filter((entry) => entry.id !== friendship.id);
-    return { id: friendship.id, status: "rejected" };
+    await this.pool.query(`DELETE FROM friendships WHERE id = $1`, [friendship.id]);
+    return { id: Number(friendship.id), status: "rejected" };
   }
 
-  blockUser({ actorUserId, targetUserId }) {
-    const actor = this.requireUser(actorUserId);
-    const target = this.requireUser(targetUserId);
-
+  async blockUser({ actorUserId, targetUserId }) {
+    const actor = await this.requireUser(actorUserId);
+    const target = await this.requireUser(targetUserId);
     if (actor.id === target.id) {
       throw new Error("cannot block yourself");
     }
-
-    const existing = this.findDirectedFriendship(actor.id, target.id);
-
+    const existing = await this.findDirectedFriendship(actor.id, target.id);
     if (existing) {
-      existing.status = "blocked";
-      existing.blockedByUserId = actor.id;
-      existing.updatedAt = new Date().toISOString();
-      return existing;
+      const updated = await this.pool.query(
+        `UPDATE friendships
+         SET status = 'blocked', blocked_by_user_id = $2, updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [existing.id, actor.id]
+      );
+      return mapFriendship(updated.rows[0]);
     }
-
-    const friendship = {
-      id: this.nextId("friendship"),
-      requesterUserId: actor.id,
-      addresseeUserId: target.id,
-      status: "blocked",
-      blockedByUserId: actor.id,
-      createdAt: new Date().toISOString()
-    };
-
-    this.friendships.push(friendship);
-    return friendship;
+    const inserted = await this.pool.query(
+      `INSERT INTO friendships (requester_user_id, addressee_user_id, status, blocked_by_user_id)
+       VALUES ($1, $2, 'blocked', $1)
+       RETURNING *`,
+      [actor.id, target.id]
+    );
+    return mapFriendship(inserted.rows[0]);
   }
 
-  listFriendshipsForUser(userId) {
-    const user = this.requireUser(userId);
-
-    return this.friendships
-      .filter((entry) => entry.requesterUserId === user.id || entry.addresseeUserId === user.id)
-      .map((entry) => ({
-        ...entry,
-        requester: this.findUserById(entry.requesterUserId),
-        addressee: this.findUserById(entry.addresseeUserId)
-      }));
+  async listFriendshipsForUser(userId) {
+    const user = await this.requireUser(userId);
+    const result = await this.pool.query(
+      `SELECT f.*,
+              ru.user_id AS requester_user_id_text,
+              ru.display_name AS requester_display_name,
+              au.user_id AS addressee_user_id_text,
+              au.display_name AS addressee_display_name
+       FROM friendships f
+       JOIN users ru ON ru.id = f.requester_user_id
+       JOIN users au ON au.id = f.addressee_user_id
+       WHERE f.requester_user_id = $1 OR f.addressee_user_id = $1
+       ORDER BY f.id`,
+      [user.id]
+    );
+    return result.rows.map((row) => ({
+      ...mapFriendship(row),
+      requester: { id: Number(row.requester_user_id), userId: row.requester_user_id_text, displayName: row.requester_display_name },
+      addressee: { id: Number(row.addressee_user_id), userId: row.addressee_user_id_text, displayName: row.addressee_display_name }
+    }));
   }
 
-  createDirectMessageChat({ actorUserId, targetUserId }) {
-    const actor = this.requireUser(actorUserId);
-    const target = this.requireUser(targetUserId);
-
-    if (this.isBlockedBetween(actor.id, target.id)) {
+  async createDirectMessageChat({ actorUserId, targetUserId }) {
+    const actor = await this.requireUser(actorUserId);
+    const target = await this.requireUser(targetUserId);
+    if (await this.isBlockedBetween(actor.id, target.id)) {
       throw new Error("cannot create DM because one user blocked the other");
     }
-
-    const areFriends = this.friendships.some((entry) => {
-      const samePair =
-        (entry.requesterUserId === actor.id && entry.addresseeUserId === target.id) ||
-        (entry.requesterUserId === target.id && entry.addresseeUserId === actor.id);
-
-      return samePair && entry.status === "accepted";
-    });
-
-    if (!areFriends) {
+    if (!(await this.areFriends(actor.id, target.id))) {
       throw new Error("direct messages require an accepted friendship");
     }
-
-    const existing = this.chats.find((chat) => {
-      if (chat.kind !== "dm") {
-        return false;
-      }
-
-      const ids = chat.memberIds.slice().sort((a, b) => a - b);
-      return ids.length === 2 && ids[0] === Math.min(actor.id, target.id) && ids[1] === Math.max(actor.id, target.id);
-    });
-
-    if (existing) {
-      return existing;
+    const existing = await this.pool.query(
+      `SELECT c.id
+       FROM chats c
+       JOIN chat_members cm ON cm.chat_id = c.id
+       WHERE c.kind = 'dm'
+       GROUP BY c.id
+       HAVING COUNT(*) = 2 AND BOOL_OR(cm.user_id = $1) AND BOOL_OR(cm.user_id = $2)`,
+      [actor.id, target.id]
+    );
+    if (existing.rowCount > 0) {
+      return this.requireChat(existing.rows[0].id);
     }
-
-    const chat = {
-      id: this.nextId("chat"),
-      kind: "dm",
-      title: null,
-      createdByUserId: actor.id,
-      memberIds: [actor.id, target.id],
-      roles: [],
-      createdAt: new Date().toISOString()
-    };
-
-    this.chats.push(chat);
-    return chat;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const chatInsert = await client.query(
+        `INSERT INTO chats (kind, title, created_by_user_id)
+         VALUES ('dm', NULL, $1)
+         RETURNING id`,
+        [actor.id]
+      );
+      const chatId = chatInsert.rows[0].id;
+      await client.query(`INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2), ($1, $3)`, [chatId, actor.id, target.id]);
+      await client.query("COMMIT");
+      return this.requireChat(chatId);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  createGroupChat({ actorUserId, title, memberUserIds = [] }) {
-    const actor = this.requireUser(actorUserId);
-
+  async createGroupChat({ actorUserId, title, memberUserIds = [] }) {
+    const actor = await this.requireUser(actorUserId);
     if (!title || typeof title !== "string") {
       throw new Error("title is required");
     }
-
-    const uniqueMemberIds = [...new Set([actor.id, ...memberUserIds.map((value) => this.requireUser(value).id)])];
-
-    const invalidMemberId = uniqueMemberIds.find((memberId) => memberId !== actor.id && !this.areFriends(actor.id, memberId));
-
-    if (invalidMemberId) {
-      throw new Error("only friends can be invited to a group");
+    const resolvedMembers = [];
+    for (const value of memberUserIds) {
+      const user = await this.requireUser(value);
+      resolvedMembers.push(user.id);
     }
+    const uniqueMemberIds = [...new Set([actor.id, ...resolvedMembers])];
+    for (const memberId of uniqueMemberIds) {
+      if (memberId !== actor.id && !(await this.areFriends(actor.id, memberId))) {
+        throw new Error("only friends can be invited to a group");
+      }
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const chatInsert = await client.query(
+        `INSERT INTO chats (kind, title, created_by_user_id)
+         VALUES ('group', $1, $2)
+         RETURNING id`,
+        [title, actor.id]
+      );
+      const chatId = chatInsert.rows[0].id;
+      for (const memberId of uniqueMemberIds) {
+        await client.query(`INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2)`, [chatId, memberId]);
+      }
+      const roleInsert = await client.query(
+        `INSERT INTO group_roles (
+           chat_id, name, can_delete_messages, can_kick_members, can_edit_group_name,
+           can_invite_members, can_manage_roles, can_view_audit_logs, can_delete_audit_logs
+         )
+         VALUES ($1, 'Admin', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+         RETURNING id`,
+        [chatId]
+      );
+      await client.query(`INSERT INTO group_role_members (role_id, user_id) VALUES ($1, $2)`, [roleInsert.rows[0].id, actor.id]);
+      await client.query(
+        `INSERT INTO audit_logs (chat_id, actor_user_id, event_type, payload)
+         VALUES ($1, $2, 'group.created', $3::jsonb)`,
+        [chatId, actor.id, JSON.stringify({ title, memberIds: uniqueMemberIds })]
+      );
+      await client.query("COMMIT");
+      return this.requireChat(chatId);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
-    const adminRole = {
-      id: this.nextId("role"),
-      name: "Admin",
-      memberIds: [actor.id],
-      permissions: this.permissionsFromList(ROLE_PERMISSIONS)
+  async requireChat(chatId) {
+    const chatResult = await this.pool.query(
+      `SELECT id, kind, title, created_by_user_id, created_at FROM chats WHERE id = $1`,
+      [Number(chatId)]
+    );
+    if (chatResult.rowCount === 0) {
+      throw new Error("chat not found");
+    }
+    const chat = chatResult.rows[0];
+    const members = await this.pool.query(`SELECT user_id FROM chat_members WHERE chat_id = $1 ORDER BY user_id`, [chat.id]);
+    const roles = chat.kind === "group" ? await this.listRolesForChat(chat.id) : [];
+    return {
+      id: Number(chat.id),
+      kind: chat.kind,
+      title: chat.title,
+      createdByUserId: chat.created_by_user_id ? Number(chat.created_by_user_id) : null,
+      memberIds: members.rows.map((row) => Number(row.user_id)),
+      roles,
+      createdAt: chat.created_at.toISOString()
     };
+  }
 
-    const chat = {
-      id: this.nextId("chat"),
-      kind: "group",
-      title,
-      createdByUserId: actor.id,
-      memberIds: uniqueMemberIds,
-      roles: [adminRole],
-      createdAt: new Date().toISOString()
-    };
-
-    this.chats.push(chat);
-    this.writeAuditLog({
-      chatId: chat.id,
-      actorUserId: actor.id,
-      eventType: "group.created",
-      payload: { title, memberIds: uniqueMemberIds }
-    });
+  async requireGroupChat(chatId) {
+    const chat = await this.requireChat(chatId);
+    if (chat.kind !== "group") {
+      throw new Error("group chat not found");
+    }
     return chat;
   }
 
-  addGroupRole({ chatId, actorUserId, name, permissions }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireGroupChat(chatId);
-
-    if (!this.canManageRoles(chat, actor.id)) {
+  async addGroupRole({ chatId, actorUserId, name, permissions }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireGroupChat(chatId);
+    if (!(await this.canManageRoles(chat, actor.id))) {
       throw new Error("actor cannot manage roles");
     }
-
-    const role = {
-      id: this.nextId("role"),
-      name,
-      memberIds: [],
-      permissions: this.permissionsFromList(permissions || [])
-    };
-
-    chat.roles.push(role);
-    this.writeAuditLog({
-      chatId: chat.id,
-      actorUserId: actor.id,
-      eventType: "role.created",
-      payload: { roleId: role.id, name, permissions: role.permissions }
-    });
-    return role;
+    const permissionMap = this.permissionsFromList(permissions || []);
+    const result = await this.pool.query(
+      `INSERT INTO group_roles (
+         chat_id, name, can_delete_messages, can_kick_members, can_edit_group_name,
+         can_invite_members, can_manage_roles, can_view_audit_logs, can_delete_audit_logs
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [chat.id, name, permissionMap.canDeleteMessages, permissionMap.canKickMembers, permissionMap.canEditGroupName, permissionMap.canInviteMembers, permissionMap.canManageRoles, permissionMap.canViewAuditLogs, permissionMap.canDeleteAuditLogs]
+    );
+    await this.writeAuditLog({ chatId: chat.id, actorUserId: actor.id, eventType: "role.created", payload: { roleId: result.rows[0].id, name, permissions: permissionMap } });
+    return this.getRoleById(result.rows[0].id);
   }
 
-  assignRole({ chatId, roleId, actorUserId, targetUserId }) {
-    const actor = this.requireUser(actorUserId);
-    const target = this.requireUser(targetUserId);
-    const chat = this.requireGroupChat(chatId);
-    const role = chat.roles.find((entry) => entry.id === Number(roleId));
-
-    if (!role) {
+  async assignRole({ chatId, roleId, actorUserId, targetUserId }) {
+    const actor = await this.requireUser(actorUserId);
+    const target = await this.requireUser(targetUserId);
+    const chat = await this.requireGroupChat(chatId);
+    const role = await this.getRoleById(roleId);
+    if (!role || role.chatId !== chat.id) {
       throw new Error("role not found");
     }
-
     if (!chat.memberIds.includes(target.id)) {
       throw new Error("target user is not in the group");
     }
-
-    if (!this.canManageRoles(chat, actor.id)) {
+    if (!(await this.canManageRoles(chat, actor.id))) {
       throw new Error("actor cannot manage roles");
     }
-
-    if (!role.memberIds.includes(target.id)) {
-      role.memberIds.push(target.id);
-    }
-
-    this.writeAuditLog({
-      chatId: chat.id,
-      actorUserId: actor.id,
-      eventType: "role.assigned",
-      payload: { roleId: role.id, targetUserId: target.id }
-    });
-    return role;
+    await this.pool.query(`INSERT INTO group_role_members (role_id, user_id) VALUES ($1, $2) ON CONFLICT (role_id, user_id) DO NOTHING`, [role.id, target.id]);
+    await this.writeAuditLog({ chatId: chat.id, actorUserId: actor.id, eventType: "role.assigned", payload: { roleId: role.id, targetUserId: target.id } });
+    return this.getRoleById(role.id);
   }
 
-  createMessage({ chatId, actorUserId, body }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireChat(chatId);
-
+  async createMessage({ chatId, actorUserId, body }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireChat(chatId);
     if (!chat.memberIds.includes(actor.id)) {
       throw new Error("actor is not a member of this chat");
     }
-
     if (!body || typeof body !== "string") {
       throw new Error("body is required");
     }
-
-    const message = {
-      id: this.nextId("message"),
-      chatId: chat.id,
-      senderUserId: actor.id,
-      body,
-      deletedAt: null,
-      createdAt: new Date().toISOString()
-    };
-
-    this.messages.push(message);
-    return message;
+    const result = await this.pool.query(
+      `INSERT INTO messages (chat_id, sender_user_id, body)
+       VALUES ($1, $2, $3)
+       RETURNING id, chat_id, sender_user_id, body, deleted_at, created_at`,
+      [chat.id, actor.id, body]
+    );
+    return mapMessage(result.rows[0], []);
   }
 
-  listMessages({ chatId, viewerUserId }) {
-    const viewer = this.requireUser(viewerUserId);
-    const chat = this.requireChat(chatId);
-
+  async listMessages({ chatId, viewerUserId }) {
+    const viewer = await this.requireUser(viewerUserId);
+    const chat = await this.requireChat(chatId);
     if (!chat.memberIds.includes(viewer.id)) {
       throw new Error("viewer is not a member of this chat");
     }
-
-    const blockedUserIds = this.blockedUserIdsFor(viewer.id);
-
-    return this.messages
-      .filter((message) => message.chatId === chat.id)
-      .filter((message) => !blockedUserIds.has(message.senderUserId))
-      .map((message) => ({
-        ...message,
-        reactions: this.reactions.filter((reaction) => reaction.messageId === message.id)
-      }));
+    const blockedIds = await this.blockedUserIdsFor(viewer.id);
+    const result = blockedIds.length > 0
+      ? await this.pool.query(
+          `SELECT id, chat_id, sender_user_id, body, deleted_at, created_at
+           FROM messages
+           WHERE chat_id = $1 AND NOT (sender_user_id = ANY($2::bigint[]))
+           ORDER BY id ASC`,
+          [chat.id, blockedIds]
+        )
+      : await this.pool.query(
+          `SELECT id, chat_id, sender_user_id, body, deleted_at, created_at
+           FROM messages
+           WHERE chat_id = $1
+           ORDER BY id ASC`,
+          [chat.id]
+        );
+    const messageIds = result.rows.map((row) => Number(row.id));
+    const reactions = messageIds.length > 0 ? await this.getReactionsForMessages(messageIds) : new Map();
+    return result.rows.map((row) => mapMessage(row, reactions.get(Number(row.id)) || []));
   }
 
-  deleteMessage({ chatId, messageId, actorUserId }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireChat(chatId);
-    const message = this.messages.find(
-      (entry) => entry.id === Number(messageId) && entry.chatId === Number(chat.id)
+  async deleteMessage({ chatId, messageId, actorUserId }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireChat(chatId);
+    const result = await this.pool.query(
+      `SELECT id, chat_id, sender_user_id, body, deleted_at, created_at
+       FROM messages
+       WHERE id = $1 AND chat_id = $2`,
+      [Number(messageId), Number(chat.id)]
     );
-
-    if (!message) {
+    if (result.rowCount === 0) {
       throw new Error("message not found");
     }
-
-    const isSender = message.senderUserId === actor.id;
-    const canModerate = chat.kind === "group" && this.canDeleteMessages(chat, actor.id);
-
+    const message = result.rows[0];
+    const isSender = Number(message.sender_user_id) === actor.id;
+    const canModerate = chat.kind === "group" && (await this.canDeleteMessages(chat, actor.id));
     if (!isSender && !canModerate) {
       throw new Error("actor cannot delete this message");
     }
-
-    if (!message.deletedAt) {
-      message.deletedAt = new Date().toISOString();
-      message.body = "[deleted]";
-      this.writeAuditLog({
-        chatId: chat.id,
-        actorUserId: actor.id,
-        eventType: "message.deleted",
-        payload: { messageId: message.id }
-      });
-    }
-
-    return message;
+    const updated = await this.pool.query(
+      `UPDATE messages SET deleted_at = COALESCE(deleted_at, NOW()), body = '[deleted]' WHERE id = $1
+       RETURNING id, chat_id, sender_user_id, body, deleted_at, created_at`,
+      [message.id]
+    );
+    await this.writeAuditLog({ chatId: chat.id, actorUserId: actor.id, eventType: "message.deleted", payload: { messageId: Number(message.id) } });
+    return mapMessage(updated.rows[0], []);
   }
 
-  addReaction({ chatId, messageId, actorUserId, emoji }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireChat(chatId);
-    const message = this.messages.find(
-      (entry) => entry.id === Number(messageId) && entry.chatId === Number(chat.id)
-    );
-
-    if (!message) {
-      throw new Error("message not found");
-    }
-
+  async addReaction({ chatId, messageId, actorUserId, emoji }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireChat(chatId);
     if (!chat.memberIds.includes(actor.id)) {
       throw new Error("actor is not a member of this chat");
     }
-
     if (!emoji || typeof emoji !== "string") {
       throw new Error("emoji is required");
     }
-
-    const existing = this.reactions.find(
-      (entry) => entry.messageId === message.id && entry.userId === actor.id && entry.emoji === emoji
-    );
-
-    if (existing) {
-      return existing;
-    }
-
-    const reaction = {
-      id: this.nextId("reaction"),
-      messageId: message.id,
-      userId: actor.id,
-      emoji,
-      createdAt: new Date().toISOString()
-    };
-
-    this.reactions.push(reaction);
-    return reaction;
-  }
-
-  removeReaction({ chatId, messageId, actorUserId, emoji }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireChat(chatId);
-    const message = this.messages.find(
-      (entry) => entry.id === Number(messageId) && entry.chatId === Number(chat.id)
-    );
-
-    if (!message) {
+    const message = await this.pool.query(`SELECT id FROM messages WHERE id = $1 AND chat_id = $2`, [Number(messageId), chat.id]);
+    if (message.rowCount === 0) {
       throw new Error("message not found");
     }
-
-    const beforeCount = this.reactions.length;
-
-    this.reactions = this.reactions.filter((entry) => {
-      return !(entry.messageId === message.id && entry.userId === actor.id && entry.emoji === emoji);
-    });
-
-    return { removed: beforeCount !== this.reactions.length };
+    const result = await this.pool.query(
+      `INSERT INTO message_reactions (message_id, user_id, emoji)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (message_id, user_id, emoji) DO UPDATE SET emoji = EXCLUDED.emoji
+       RETURNING id, message_id, user_id, emoji, created_at`,
+      [Number(messageId), actor.id, emoji]
+    );
+    return mapReaction(result.rows[0]);
   }
 
-  listAuditLogs({ chatId, actorUserId }) {
-    const actor = this.requireUser(actorUserId);
-    const chat = this.requireGroupChat(chatId);
+  async removeReaction({ chatId, messageId, actorUserId, emoji }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireChat(chatId);
+    if (!chat.memberIds.includes(actor.id)) {
+      throw new Error("actor is not a member of this chat");
+    }
+    const deleted = await this.pool.query(`DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3`, [Number(messageId), actor.id, emoji]);
+    return { removed: deleted.rowCount > 0 };
+  }
 
-    if (!this.canViewAuditLogs(chat, actor.id)) {
+  async listAuditLogs({ chatId, actorUserId }) {
+    const actor = await this.requireUser(actorUserId);
+    const chat = await this.requireGroupChat(chatId);
+    if (!(await this.canViewAuditLogs(chat, actor.id))) {
       throw new Error("actor cannot view audit logs");
     }
-
-    return this.auditLogs.filter((entry) => entry.chatId === chat.id);
+    const result = await this.pool.query(
+      `SELECT id, chat_id, actor_user_id, event_type, payload, created_at
+       FROM audit_logs
+       WHERE chat_id = $1
+       ORDER BY id DESC`,
+      [chat.id]
+    );
+    return result.rows.map(mapAuditLog);
   }
 
-  writeAuditLog({ chatId, actorUserId, eventType, payload }) {
-    this.auditLogs.push({
-      id: this.nextId("auditLog"),
-      chatId,
-      actorUserId,
-      eventType,
-      payload,
-      createdAt: new Date().toISOString()
-    });
+  async writeAuditLog({ chatId, actorUserId, eventType, payload }) {
+    await this.pool.query(
+      `INSERT INTO audit_logs (chat_id, actor_user_id, event_type, payload)
+       VALUES ($1, $2, $3, $4::jsonb)`,
+      [chatId, actorUserId, eventType, JSON.stringify(payload || {})]
+    );
   }
 
-  canDeleteMessages(chat, userId) {
-    return this.hasPermission(chat, userId, "canDeleteMessages");
+  async canDeleteMessages(chat, userId) {
+    return this.hasPermission(chat.id, userId, "can_delete_messages");
   }
 
-  canManageRoles(chat, userId) {
-    return this.hasPermission(chat, userId, "canManageRoles");
+  async canManageRoles(chat, userId) {
+    return this.hasPermission(chat.id, userId, "can_manage_roles");
   }
 
-  canViewAuditLogs(chat, userId) {
-    return this.hasPermission(chat, userId, "canViewAuditLogs");
+  async canViewAuditLogs(chat, userId) {
+    return this.hasPermission(chat.id, userId, "can_view_audit_logs");
   }
 
-  hasPermission(chat, userId, permission) {
-    return chat.roles.some((role) => role.memberIds.includes(userId) && role.permissions[permission]);
+  async hasPermission(chatId, userId, columnName) {
+    const result = await this.pool.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM group_roles gr
+         JOIN group_role_members grm ON grm.role_id = gr.id
+         WHERE gr.chat_id = $1 AND grm.user_id = $2 AND ${columnName} = TRUE
+       ) AS allowed`,
+      [chatId, userId]
+    );
+    return result.rows[0].allowed;
   }
 
-  blockedUserIdsFor(userId) {
-    const blockedIds = new Set();
-
-    for (const entry of this.friendships) {
-      if (entry.status !== "blocked") {
-        continue;
-      }
-
-      if (entry.requesterUserId === userId) {
-        blockedIds.add(entry.addresseeUserId);
-      }
-
-      if (entry.addresseeUserId === userId) {
-        blockedIds.add(entry.requesterUserId);
-      }
-    }
-
-    return blockedIds;
+  async blockedUserIdsFor(userId) {
+    const result = await this.pool.query(
+      `SELECT requester_user_id, addressee_user_id
+       FROM friendships
+       WHERE status = 'blocked' AND (requester_user_id = $1 OR addressee_user_id = $1)`,
+      [userId]
+    );
+    return result.rows.map((row) => Number(row.requester_user_id) === Number(userId) ? Number(row.addressee_user_id) : Number(row.requester_user_id));
   }
 
-  areFriends(firstUserId, secondUserId) {
-    return this.friendships.some((entry) => {
-      if (entry.status !== "accepted") {
-        return false;
-      }
-
-      return (
-        (entry.requesterUserId === firstUserId && entry.addresseeUserId === secondUserId) ||
-        (entry.requesterUserId === secondUserId && entry.addresseeUserId === firstUserId)
-      );
-    });
+  async areFriends(firstUserId, secondUserId) {
+    const result = await this.pool.query(
+      `SELECT 1
+       FROM friendships
+       WHERE status = 'accepted'
+         AND ((requester_user_id = $1 AND addressee_user_id = $2) OR (requester_user_id = $2 AND addressee_user_id = $1))
+       LIMIT 1`,
+      [firstUserId, secondUserId]
+    );
+    return result.rowCount > 0;
   }
 
-  isBlockedBetween(firstUserId, secondUserId) {
-    return this.friendships.some((entry) => {
-      if (entry.status !== "blocked") {
-        return false;
-      }
+  async isBlockedBetween(firstUserId, secondUserId) {
+    const result = await this.pool.query(
+      `SELECT 1
+       FROM friendships
+       WHERE status = 'blocked'
+         AND ((requester_user_id = $1 AND addressee_user_id = $2) OR (requester_user_id = $2 AND addressee_user_id = $1))
+       LIMIT 1`,
+      [firstUserId, secondUserId]
+    );
+    return result.rowCount > 0;
+  }
 
-      return (
-        (entry.requesterUserId === firstUserId && entry.addresseeUserId === secondUserId) ||
-        (entry.requesterUserId === secondUserId && entry.addresseeUserId === firstUserId)
-      );
-    });
+  async findFriendshipPair(firstUserId, secondUserId) {
+    const result = await this.pool.query(
+      `SELECT * FROM friendships
+       WHERE (requester_user_id = $1 AND addressee_user_id = $2) OR (requester_user_id = $2 AND addressee_user_id = $1)
+       LIMIT 1`,
+      [firstUserId, secondUserId]
+    );
+    return result.rowCount === 0 ? null : mapFriendship(result.rows[0]);
+  }
+
+  async findDirectedFriendship(requesterUserId, addresseeUserId) {
+    const result = await this.pool.query(
+      `SELECT * FROM friendships WHERE requester_user_id = $1 AND addressee_user_id = $2 LIMIT 1`,
+      [requesterUserId, addresseeUserId]
+    );
+    return result.rowCount === 0 ? null : mapFriendship(result.rows[0]);
+  }
+
+  async getReadState(chatId, userId) {
+    const result = await this.pool.query(
+      `SELECT chat_id, user_id, last_read_message_id, updated_at
+       FROM read_states
+       WHERE chat_id = $1 AND user_id = $2`,
+      [Number(chatId), Number(userId)]
+    );
+    return result.rowCount === 0 ? null : mapReadState(result.rows[0]);
   }
 
   permissionsFromList(permissionList) {
@@ -756,73 +725,115 @@ class AppStore {
     }
   }
 
-  requireUser(userId) {
-    const normalizedUserId = Number(userId);
-    const byNumericId = Number.isFinite(normalizedUserId) ? this.findUserById(normalizedUserId) : null;
-    const user = byNumericId || this.findUserByUserId(userId);
+  async saveChallenge(userId, challengeType, challenge) {
+    const user = await this.requireUser(userId);
+    await this.pool.query(
+      `INSERT INTO webauthn_challenges (user_id, challenge_type, challenge)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, challenge_type)
+       DO UPDATE SET challenge = EXCLUDED.challenge, created_at = NOW()`,
+      [user.id, challengeType, challenge]
+    );
+    return challenge;
+  }
 
-    if (!user) {
-      throw new Error("user not found");
+  async readChallenge(userId, challengeType) {
+    const user = await this.requireUser(userId);
+    const result = await this.pool.query(`SELECT challenge FROM webauthn_challenges WHERE user_id = $1 AND challenge_type = $2`, [user.id, challengeType]);
+    return result.rowCount === 0 ? null : result.rows[0].challenge;
+  }
+
+  async clearChallenge(userId, challengeType) {
+    const user = await this.requireUser(userId);
+    await this.pool.query(`DELETE FROM webauthn_challenges WHERE user_id = $1 AND challenge_type = $2`, [user.id, challengeType]);
+  }
+
+  async getReactionsForMessages(messageIds) {
+    const result = await this.pool.query(
+      `SELECT id, message_id, user_id, emoji, created_at
+       FROM message_reactions
+       WHERE message_id = ANY($1::bigint[])
+       ORDER BY id ASC`,
+      [messageIds]
+    );
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const reaction = mapReaction(row);
+      const list = grouped.get(reaction.messageId) || [];
+      list.push(reaction);
+      grouped.set(reaction.messageId, list);
     }
-
-    return user;
+    return grouped;
   }
 
-  requireChat(chatId) {
-    const chat = this.chats.find((entry) => entry.id === Number(chatId));
-
-    if (!chat) {
-      throw new Error("chat not found");
+  async listRolesForChat(chatId) {
+    const roles = await this.pool.query(`SELECT * FROM group_roles WHERE chat_id = $1 ORDER BY id ASC`, [chatId]);
+    const memberships = await this.pool.query(
+      `SELECT grm.role_id, grm.user_id
+       FROM group_role_members grm
+       JOIN group_roles gr ON gr.id = grm.role_id
+       WHERE gr.chat_id = $1
+       ORDER BY grm.role_id, grm.user_id`,
+      [chatId]
+    );
+    const membersByRole = new Map();
+    for (const row of memberships.rows) {
+      const roleId = Number(row.role_id);
+      const memberIds = membersByRole.get(roleId) || [];
+      memberIds.push(Number(row.user_id));
+      membersByRole.set(roleId, memberIds);
     }
-
-    return chat;
+    return roles.rows.map((row) => mapRole(row, membersByRole.get(Number(row.id)) || []));
   }
 
-  requireGroupChat(chatId) {
-    const chat = this.requireChat(chatId);
-
-    if (chat.kind !== "group") {
-      throw new Error("group chat not found");
+  async getRoleById(roleId) {
+    const roleResult = await this.pool.query(`SELECT * FROM group_roles WHERE id = $1`, [Number(roleId)]);
+    if (roleResult.rowCount === 0) {
+      return null;
     }
-
-    return chat;
-  }
-
-  findUserById(id) {
-    return this.users.find((user) => user.id === Number(id)) || null;
-  }
-
-  findUserByUserId(userId) {
-    return this.users.find((user) => user.userId === userId) || null;
-  }
-
-  findFriendshipPair(firstUserId, secondUserId) {
-    return this.friendships.find((entry) => {
-      return (
-        (entry.requesterUserId === firstUserId && entry.addresseeUserId === secondUserId) ||
-        (entry.requesterUserId === secondUserId && entry.addresseeUserId === firstUserId)
-      );
-    });
-  }
-
-  findDirectedFriendship(requesterUserId, addresseeUserId) {
-    return this.friendships.find((entry) => {
-      return entry.requesterUserId === requesterUserId && entry.addresseeUserId === addresseeUserId;
-    });
-  }
-
-  getReadState(chatId, userId) {
-    return this.readStates.find((entry) => entry.chatId === Number(chatId) && entry.userId === Number(userId)) || null;
-  }
-
-  nextId(key) {
-    const value = this.counters[key];
-    this.counters[key] += 1;
-    return value;
+    const memberships = await this.pool.query(`SELECT user_id FROM group_role_members WHERE role_id = $1 ORDER BY user_id`, [Number(roleId)]);
+    return mapRole(roleResult.rows[0], memberships.rows.map((row) => Number(row.user_id)));
   }
 }
 
-module.exports = {
-  AppStore,
-  ROLE_PERMISSIONS
-};
+function mapUser(row) {
+  return { id: Number(row.id), userId: row.user_id, displayName: row.display_name, webauthnUserID: row.webauthn_user_id, createdAt: row.created_at.toISOString() };
+}
+
+function mapPasskey(row) {
+  return { id: row.id, userId: Number(row.user_id), webauthnUserID: row.webauthn_user_id, credentialId: row.credential_id, publicKey: row.public_key, counter: Number(row.counter), transports: Array.isArray(row.transports) ? row.transports : [], deviceType: row.device_type, backedUp: row.backed_up, createdAt: row.created_at.toISOString(), updatedAt: row.updated_at ? row.updated_at.toISOString() : null };
+}
+
+function mapPresence(row) {
+  return { userId: Number(row.user_id), status: row.status, isVisible: row.is_visible, isManual: row.is_manual, updatedAt: row.updated_at.toISOString() };
+}
+
+function mapNotificationSetting(row) {
+  return { userId: Number(row.user_id), scopeType: row.scope_type, scopeId: Number(row.scope_id), enabled: row.enabled, updatedAt: row.updated_at.toISOString() };
+}
+
+function mapReadState(row) {
+  return { chatId: Number(row.chat_id), userId: Number(row.user_id), lastReadMessageId: Number(row.last_read_message_id), updatedAt: row.updated_at.toISOString() };
+}
+
+function mapFriendship(row) {
+  return { id: Number(row.id), requesterUserId: Number(row.requester_user_id), addresseeUserId: Number(row.addressee_user_id), status: row.status, blockedByUserId: row.blocked_by_user_id ? Number(row.blocked_by_user_id) : null, createdAt: row.created_at.toISOString(), acceptedAt: row.accepted_at ? row.accepted_at.toISOString() : null, updatedAt: row.updated_at ? row.updated_at.toISOString() : null };
+}
+
+function mapRole(row, memberIds) {
+  return { id: Number(row.id), chatId: Number(row.chat_id), name: row.name, memberIds, permissions: { canDeleteMessages: row.can_delete_messages, canKickMembers: row.can_kick_members, canEditGroupName: row.can_edit_group_name, canInviteMembers: row.can_invite_members, canManageRoles: row.can_manage_roles, canViewAuditLogs: row.can_view_audit_logs, canDeleteAuditLogs: row.can_delete_audit_logs } };
+}
+
+function mapMessage(row, reactions) {
+  return { id: Number(row.id), chatId: Number(row.chat_id), senderUserId: row.sender_user_id ? Number(row.sender_user_id) : null, body: row.body, deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null, createdAt: row.created_at.toISOString(), reactions };
+}
+
+function mapReaction(row) {
+  return { id: Number(row.id), messageId: Number(row.message_id), userId: Number(row.user_id), emoji: row.emoji, createdAt: row.created_at.toISOString() };
+}
+
+function mapAuditLog(row) {
+  return { id: Number(row.id), chatId: row.chat_id ? Number(row.chat_id) : null, actorUserId: row.actor_user_id ? Number(row.actor_user_id) : null, eventType: row.event_type, payload: row.payload, createdAt: row.created_at.toISOString() };
+}
+
+module.exports = { AppStore, ROLE_PERMISSIONS };
